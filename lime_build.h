@@ -13,6 +13,14 @@ inline lime::string operator+(const char *raw_str, const lime::string& lime_stri
 inline lime::string operator+(const char *raw_str_1, const char *raw_str_2)         noexcept { return lime::string(raw_str_1) + raw_str_2; }
 inline lime::string operator+(char character, const lime::string& lime_string)      noexcept { return lime_string.insert(0, character); }
 
+// NOTE: STANDARD FOR THIS FUNCTION: Won't resolve symlinks (including . & ..).
+inline lime::string operator/(const char *raw_str, const lime::string& lime_string) noexcept {
+	return lime::string((std::filesystem::path(raw_str) / std::filesystem::path(*(const std::string*)&lime_string)).c_str());
+}
+inline lime::string operator/(const char *raw_str_1, const char *raw_str_2) noexcept {
+	return lime::string((std::filesystem::path(raw_str_1) / std::filesystem::path(raw_str_2)).c_str());
+}
+
 namespace lime {
 
 	// NOTE: Private inheritance, on purpose, don't change.
@@ -38,11 +46,27 @@ namespace lime {
 
 		lime::string(const char *raw_str) noexcept : std::string(raw_str) { }
 
-		explicit lime::string(const std::string& std_string) noexcept : std::string(std_string) { }
-		explicit lime::string(std::string&& std_string)      noexcept : std::string(std::move(std_string)) { }
+		lime::string(const std::string& std_string) noexcept : std::string(std_string) { }
+		lime::string(std::string&& std_string)      noexcept : std::string(std::move(std_string)) { }
 
-		lime::string operator+(const char *raw_str) const noexcept { return (lime::string)(std::string::operator+(raw_str)); }
+		lime::string operator+(const lime::string& right) const noexcept { return lime::string(std::string::operator+(*(const std::string*)&right)); }
+		lime::string& operator+=(const lime::string& right) noexcept { std::string::operator+=(*(const std::string*)&right); return *this; }
+		lime::string operator+(const char *raw_str) const noexcept { return lime::string(std::string::operator+(raw_str)); }
 		lime::string& operator+=(const char *raw_str) noexcept { std::string::operator+=(raw_str); return *this; }
+
+		lime::string operator/(const lime::string& right) const noexcept {
+			return lime::string((std::filesystem::path(*(const std::string*)this) / std::filesystem::path(*(const lime::string*)&right)).c_str());
+		}
+		// TODO: Would returning void here be UB? I would think not, but if it isn't, it's harder to rely on this behavior for other classes right?
+		lime::string& operator/=(const lime::string& right) noexcept {
+			return (*this = operator/(right));
+		}
+		lime::string operator/(const char *raw_str) const noexcept {
+			return lime::string((std::filesystem::path(*(const std::string*)this) / std::filesystem::path(raw_str)).c_str());
+		}
+		lime::string& operator/=(const char *raw_str) noexcept {
+			return (*this = operator/(raw_str));
+		}
 
 		// NOTE: These just bring a select few functions, which are marked private because of the above private inheritance, into the public "space".
 		using std::string::c_str();
@@ -90,14 +114,14 @@ namespace lime {
 		lime::string get_parent_folder() const noexcept {
 			std::filesystem::path path;
 			try {
-				path = std::filesystem::absolute(std::filesystem::weakly_canonical(std::filesystem::path(*(const std::string*)this)));
+				path = std::filesystem::absolute(std::filesystem::path(*(const std::string*)this));
+				return path.parent_path().c_str();	// TODO: Convert in better way that doesn't require remeasuring the string.
 			}
 			catch (const std::filesystem::filesystem_error& exception) {
 				// TODO: Replace std::filesystem, see below.
 				lime::error("get_parent_folder() failed: " + exception.what());
 				exit_program();
 			}
-			return path.parent_path().c_str();
 		}
 
 		lime::string get_relative_path(const lime::string& base) const noexcept {
@@ -110,19 +134,6 @@ namespace lime {
 				// TODO: Replace std::filesystem, it's a half-baked solution. The documentation is shit.
 				// For example, what exception does the thing throw if allocation fails, bad_alloc? Or does it throw one of these with a specific error code? Which error code? Only god knows.
 				lime::error("get_relative_path(base) failed: " + exception.what());
-				exit_program();
-			}
-		}
-
-		lime::string apply_relative_path_to(const lime::string& base) const noexcept {
-			try {
-				std::filesystem::path base_path(*(const std::string*)&base);
-				std::filesystem::path this_path(*(const std::string*)this);
-				return std::filesystem::weakly_canonical((base_path / this_path)).c_str();
-			}
-			catch (const std::filesystem::filesystem_error& exception) {
-				// TODO: Replace std::filesystem, see above.
-				lime::error("apply_relative_path_to(base) failed: " + exception.what());
 				exit_program();
 			}
 		}

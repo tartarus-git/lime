@@ -5,7 +5,7 @@
 
 void build_and_link_all_cpp_files() noexcept {
 	for (lime::string path : lime::enum_files_recursive(".", "*.cpp")) {
-		lime::string object_path = path.get_relative_path("src").remove_extention().add_extention("o").apply_relative_path_to("bin");
+		lime::string object_path = "bin" / path.get_relative_path("src").remove_extention().add_extention("o");
 		lime::call_if_out_of_date(object_path, path, []() {
 			lime::create_path(object_path.get_parent_folder());
 			lime::exec(COMPILER + "-o " + object_path + ' ' + path);
