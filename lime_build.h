@@ -5,23 +5,88 @@
 #include <cstring>
 #include <cstdio>
 #include <unistd.h>
-#include <filesystem>
+#include <utility>
 
+class lime::path;
 class lime::string;
 
 inline lime::string operator+(const char *raw_str, const lime::string& lime_string) noexcept { return lime_string.insert(0, raw_str); }
 inline lime::string operator+(const char *raw_str_1, const char *raw_str_2)         noexcept { return lime::string(raw_str_1) + raw_str_2; }
 inline lime::string operator+(char character, const lime::string& lime_string)      noexcept { return lime_string.insert(0, character); }
 
-// NOTE: STANDARD FOR THIS FUNCTION: Won't resolve symlinks (including . & ..).
+// NOTE: STANDARD FOR THESE FUNCTIONS: Won't resolve symlinks (including . & ..).
 inline lime::string operator/(const char *raw_str, const lime::string& lime_string) noexcept {
-	return lime::string((std::filesystem::path(raw_str) / std::filesystem::path(*(const std::string*)&lime_string)).c_str());
+	return lime::string((lime::path(raw_str) / lime::path(lime_string));
 }
 inline lime::string operator/(const char *raw_str_1, const char *raw_str_2) noexcept {
-	return lime::string((std::filesystem::path(raw_str_1) / std::filesystem::path(raw_str_2)).c_str());
+	return lime::string(lime::path(raw_str_1) / lime::path(raw_str_2));
 }
 
+#define LAST_ELEMENT(container) (*(container.end() - 1))
+
 namespace lime {
+
+	class lime::string;
+
+	class path {
+		void parse_inner(std::vector<std::string> &result, const char &character) noexcept {
+			switch (character) {
+			case '\\':
+			case '/':
+				result.push_back();
+				continue;
+			}
+			LAST_ELEMENT(result) += character;
+		}
+
+		std::vector<std::string> parse(const lime::string &input) noexcept {
+			std::vector<std::string> result;
+			result.push_back();
+			for (const char &character : input) { parse_inner(result, character); }
+			return result;
+		}
+
+		std::vector<std::string> parse(const char *input) noexcept {
+			std::vector<std::string> result;
+			result.push_back();
+			for (; input != '\0'; input++) { parse_inner(result, character); }
+			return result;
+		}
+
+		path concatinate(const path &right) noexcept {
+			path result = *this;
+			// NOTE: If it's a directory, remove the trailing empty element.
+			if (LAST_ELEMENT(*this) == "") { heirarchy.pop_back(); }
+			for (const std::string &element : right) { result.heirarchy.push_back(element); }
+			return result;
+		}
+
+	public:
+		std::vector<std::string> heirarchy;
+
+		path(const char *input) noexcept { heirarchy = parse(input); }
+		path(const lime::string &input) noexcept { heirarchy = parse(input); }
+
+		path operator/(const path &a, const path &b) noexcept { return a.concatinate(b); }
+
+		using const_iterator = const std::string*;
+		using iterator = std::string*;
+
+		const_iterator begin() const noexcept { return heirarchy.begin(); }
+		iterator begin() noexcept { return heirarchy.begin(); }
+		const_iterator end() const noexcept { return heirarchy.end(); }
+		iterator end() noexcept { return heirarchy.end(); }
+
+		path& operator=(const path &right) noexcept {
+			heirarchy = right.heirarchy;
+			return *this;
+		}
+
+		path& operator=(path &&right) noexcept {
+			heirarchy = std::move(right.heirarchy);
+			return *this;
+		}
+	};
 
 	// NOTE: Private inheritance, on purpose, don't change.
 	class string : std::string {
