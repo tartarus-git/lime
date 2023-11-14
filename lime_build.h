@@ -6,9 +6,10 @@
 #include <cstdio>
 #include <unistd.h>
 #include <utility>
+#include <climits>
 
-class lime::path;
 class lime::string;
+class lime::string::path;
 
 inline lime::string operator+(const char *raw_str, const lime::string& lime_string) noexcept { return lime_string.insert(0, raw_str); }
 inline lime::string operator+(const char *raw_str_1, const char *raw_str_2)         noexcept { return lime::string(raw_str_1) + raw_str_2; }
@@ -16,10 +17,10 @@ inline lime::string operator+(char character, const lime::string& lime_string)  
 
 // NOTE: STANDARD FOR THESE FUNCTIONS: Won't resolve symlinks (including . & ..).
 inline lime::string operator/(const char *raw_str, const lime::string& lime_string) noexcept {
-	return lime::string((lime::path(raw_str) / lime::path(lime_string));
+	return lime::string((lime::string::path(raw_str) / lime::string::path(lime_string));
 }
 inline lime::string operator/(const char *raw_str_1, const char *raw_str_2) noexcept {
-	return lime::string(lime::path(raw_str_1) / lime::path(raw_str_2));
+	return lime::string(lime::string::path(raw_str_1) / lime::string::path(raw_str_2));
 }
 
 #define LAST_ELEMENT(container) (*(container.end() - 1))
@@ -28,68 +29,127 @@ namespace lime {
 
 	class lime::string;
 
-	class path {
-		void parse_inner(std::vector<std::string> &result, const char &character) noexcept {
-			switch (character) {
-			case '\\':
-			case '/':
-				result.push_back();
-				continue;
+	class string : private std::string {
+		class path {
+			void parse_inner(std::vector<std::string> &result, const char &character) noexcept {
+				switch (character) {
+				case '\\':
+				case '/':
+					result.push_back();
+					continue;
+				}
+				LAST_ELEMENT(result) += character;
 			}
-			LAST_ELEMENT(result) += character;
-		}
 
-		std::vector<std::string> parse(const lime::string &input) noexcept {
-			std::vector<std::string> result;
-			result.push_back();
-			for (const char &character : input) { parse_inner(result, character); }
-			return result;
-		}
+			std::vector<std::string> parse(const lime::string &input) noexcept {
+				std::vector<std::string> result;
+				result.push_back();
+				for (const char &character : input) { parse_inner(result, character); }
+				return result;
+			}
 
-		std::vector<std::string> parse(const char *input) noexcept {
-			std::vector<std::string> result;
-			result.push_back();
-			for (; input != '\0'; input++) { parse_inner(result, character); }
-			return result;
-		}
+			std::vector<std::string> parse(const char *input) noexcept {
+				std::vector<std::string> result;
+				result.push_back();
+				for (; input != '\0'; input++) { parse_inner(result, character); }
+				return result;
+			}
 
-		path concatinate(const path &right) noexcept {
-			path result = *this;
-			// NOTE: If it's a directory, remove the trailing empty element.
-			if (LAST_ELEMENT(*this) == "") { heirarchy.pop_back(); }
-			for (const std::string &element : right) { result.heirarchy.push_back(element); }
-			return result;
-		}
+			path concatinate(const path &right) noexcept {
+				path result = *this;
+				// NOTE: If it's a directory, remove the trailing empty element.
+				if (LAST_ELEMENT(*this) == "") { heirarchy.pop_back(); }
+				for (const std::string &element : right) { result.heirarchy.push_back(element); }
+				return result;
+			}
 
-	public:
-		std::vector<std::string> heirarchy;
+		public:
+			std::vector<std::string> heirarchy;
 
-		path(const char *input) noexcept { heirarchy = parse(input); }
-		path(const lime::string &input) noexcept { heirarchy = parse(input); }
+			path(const char *input) noexcept { heirarchy = parse(input); }
+			path(const lime::string &input) noexcept { heirarchy = parse(input); }
 
-		path operator/(const path &a, const path &b) noexcept { return a.concatinate(b); }
+			path operator/(const path &right) noexcept { return this->concatinate(right); }
 
-		using const_iterator = const std::string*;
-		using iterator = std::string*;
+			path to_absolute() noexcept {
+				char cwd[PATH_MAX + 1];
+				if (getcwd(cwd, sizeof(cwd)) == nullptr) {
+					lime::error("lime::string::path::to_absolute() failed");
+					exit_program();
+				}
+				return path(cwd) / *this;
+			}
 
-		const_iterator begin() const noexcept { return heirarchy.begin(); }
-		iterator begin() noexcept { return heirarchy.begin(); }
-		const_iterator end() const noexcept { return heirarchy.end(); }
-		iterator end() noexcept { return heirarchy.end(); }
+			path get_parent_folder() noexcept {
+				path result = *this;
+				if (*(heirarchy.end() - 1) == "") {
+					result.heirarchy.erase(heirarchy.end() - 2);
+					return result;
+				}
+				*(result.heirarchy.end() - 1) = "";
+				return result;
+			}
 
-		path& operator=(const path &right) noexcept {
-			heirarchy = right.heirarchy;
-			return *this;
-		}
+			bool is_directory() noexcept { return *(heirarchy.end() - 1) == ""; }
 
-		path& operator=(path &&right) noexcept {
-			heirarchy = std::move(right.heirarchy);
-			return *this;
-		}
-	};
+			path get_relative_path(const path &base_path) noexcept {
+				if (base_path.is_directory() == false) {
+					lime::error("lime::string::path::get_relative_path called with non-directory base_path");
+				}
 
-	// NOTE: Private inheritance, on purpose, don't change.
-	class string : std::string {
+				const path absolute_base_path = base.to_absolute();
+				const path absolute_this_path = this->to_absolute();
+
+				const_iterator absolute_base_path_ptr = absolute_base_path.begin();
+				const_iterator absolute_this_path_ptr = absolute_this_path.begin();
+				for (; *absolute_base_path_ptr == *absolute_this_path_ptr
+				       && absolute_base_path_ptr < absolute_base_path.end()
+				       && absolute_this_path_ptr < absolute_this_path.end();
+					absolute_base_path_ptr++, absolute_this_path_ptr++)
+				{ }
+
+				path result;
+				for (; absolute_this_path_ptr < absolute_this_path.end(); absolute_this_path_ptr++) {
+					result.heirarchy.push_back(*absolute_this_path_ptr);
+				}
+				if (result.heirarchy.size() == 0) {
+					result.heirarchy.push_back(".");
+					result.heirarchy.push_back("");
+				}
+				return result;
+			}
+
+			using const_iterator = const std::string*;
+			using iterator = std::string*;
+
+			const_iterator begin() const noexcept { return heirarchy.begin(); }
+			iterator begin() noexcept { return heirarchy.begin(); }
+			const_iterator end() const noexcept { return heirarchy.end(); }
+			iterator end() noexcept { return heirarchy.end(); }
+
+			path& operator=(const path &right) noexcept {
+				heirarchy = right.heirarchy;
+				return *this;
+			}
+
+			path& operator=(path &&right) noexcept {
+				heirarchy = std::move(right.heirarchy);
+				return *this;
+			}
+
+			std::string to_std_string() noexcept { 
+				std::string result;
+				for (size_t i = 0; i < heirarchy.size() - 1; i++) {
+					const std::string &element = heirarchy[i];
+					result.push_back(element + '/');
+				}
+				result.push_back(*(heirarchy.end() - 1));
+				return result;
+			}
+		};
+
+		lime::string(const lime::path &path) noexcept : std::string(path.to_std_string()) { }
+
 		template <typename T>
 		std::vector<lime::string> inner_split(T delimiter, size_t delimiter_length) noexcept {
 			std::vector<lime::string> result;
@@ -97,7 +157,8 @@ namespace lime {
 			size_t last_delimiter_index = 0;
 			size_t next_delimiter_index = 0;
 			while ((next_delimiter_index = find(delimiter, next_delimiter_index)) != std::string::npos) {
-				result.push_back(substr(last_delimiter_index + delimiter_length, next_delimiter_index - (last_delimiter_index + delimiter_length)));
+				result.push_back(substr(last_delimiter_index + delimiter_length,
+							next_delimiter_index - (last_delimiter_index + delimiter_length)));
 				last_delimiter_index = next_delimiter_index;
 			}
 
@@ -120,14 +181,13 @@ namespace lime {
 		lime::string& operator+=(const char *raw_str) noexcept { std::string::operator+=(raw_str); return *this; }
 
 		lime::string operator/(const lime::string& right) const noexcept {
-			return lime::string((std::filesystem::path(*(const std::string*)this) / std::filesystem::path(*(const lime::string*)&right)).c_str());
+			return lime::string(path(*(const std::string*)this) / path(*(const lime::string*)&right));
 		}
-		// TODO: Would returning void here be UB? I would think not, but if it isn't, it's harder to rely on this behavior for other classes right?
 		lime::string& operator/=(const lime::string& right) noexcept {
 			return (*this = operator/(right));
 		}
 		lime::string operator/(const char *raw_str) const noexcept {
-			return lime::string((std::filesystem::path(*(const std::string*)this) / std::filesystem::path(raw_str)).c_str());
+			return lime::string(path(*(const std::string*)this) / path(raw_str));
 		}
 		lime::string& operator/=(const char *raw_str) noexcept {
 			return (*this = operator/(raw_str));
@@ -177,30 +237,14 @@ namespace lime {
 		}
 
 		lime::string get_parent_folder() const noexcept {
-			std::filesystem::path path;
-			try {
-				path = std::filesystem::absolute(std::filesystem::path(*(const std::string*)this));
-				return path.parent_path().c_str();	// TODO: Convert in better way that doesn't require remeasuring the string.
-			}
-			catch (const std::filesystem::filesystem_error& exception) {
-				// TODO: Replace std::filesystem, see below.
-				lime::error("get_parent_folder() failed: " + exception.what());
-				exit_program();
-			}
+			path absolute_path = path(*(const std::string*)this).to_absolute();
+			return path.get_parent_folder();
 		}
 
 		lime::string get_relative_path(const lime::string& base) const noexcept {
-			try {
-				std::filesystem::path base_path(*(const std::string*)&base);
-				std::filesystem::path this_path(*(const std::string*)this);
-				return std::filesystem::relative(this_path, base_path);
-			}
-			catch (const std::filesystem::filesystem_error& exception) {
-				// TODO: Replace std::filesystem, it's a half-baked solution. The documentation is shit.
-				// For example, what exception does the thing throw if allocation fails, bad_alloc? Or does it throw one of these with a specific error code? Which error code? Only god knows.
-				lime::error("get_relative_path(base) failed: " + exception.what());
-				exit_program();
-			}
+			path base_path(base);
+			path this_path(*this);
+			return this_path.get_relative_path(base_path);
 		}
 	};
 
