@@ -7,6 +7,8 @@
 #include <unistd.h>
 #include <utility>
 #include <climits>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 class lime::string;
 class lime::string::path;
@@ -31,7 +33,7 @@ namespace lime {
 
 	class string : private std::string {
 		class path {
-			void parse_inner(std::vector<std::string> &result, const char &character) noexcept {
+			void parse_inner(std::vector<std::string> &result, const char &character) const noexcept {
 				switch (character) {
 				case '\\':
 				case '/':
@@ -41,21 +43,21 @@ namespace lime {
 				LAST_ELEMENT(result) += character;
 			}
 
-			std::vector<std::string> parse(const lime::string &input) noexcept {
+			std::vector<std::string> parse(const lime::string &input) const noexcept {
 				std::vector<std::string> result;
 				result.push_back();
 				for (const char &character : input) { parse_inner(result, character); }
 				return result;
 			}
 
-			std::vector<std::string> parse(const char *input) noexcept {
+			std::vector<std::string> parse(const char *input) const noexcept {
 				std::vector<std::string> result;
 				result.push_back();
 				for (; input != '\0'; input++) { parse_inner(result, character); }
 				return result;
 			}
 
-			path concatinate(const path &right) noexcept {
+			path concatinate(const path &right) const noexcept {
 				path result = *this;
 				// NOTE: If it's a directory, remove the trailing empty element.
 				if (LAST_ELEMENT(*this) == "") { heirarchy.pop_back(); }
@@ -71,7 +73,7 @@ namespace lime {
 
 			path operator/(const path &right) noexcept { return this->concatinate(right); }
 
-			path to_absolute() noexcept {
+			path to_absolute() const noexcept {
 				char cwd[PATH_MAX + 1];
 				if (getcwd(cwd, sizeof(cwd)) == nullptr) {
 					lime::error("lime::string::path::to_absolute() failed");
@@ -80,7 +82,7 @@ namespace lime {
 				return path(cwd) / *this;
 			}
 
-			path get_parent_folder() noexcept {
+			path get_parent_folder() const noexcept {
 				path result = *this;
 				if (*(heirarchy.end() - 1) == "") {
 					result.heirarchy.erase(heirarchy.end() - 2);
@@ -90,9 +92,9 @@ namespace lime {
 				return result;
 			}
 
-			bool is_directory() noexcept { return *(heirarchy.end() - 1) == ""; }
+			bool is_directory() const noexcept { return *(heirarchy.end() - 1) == ""; }
 
-			path get_relative_path(const path &base_path) noexcept {
+			path get_relative_path(const path &base_path) const noexcept {
 				if (base_path.is_directory() == false) {
 					lime::error("lime::string::path::get_relative_path called with non-directory base_path");
 				}
@@ -119,6 +121,12 @@ namespace lime {
 				return result;
 			}
 
+			std::chrono::time_point get_last_modification_time() const noexcept {
+				struct stat stat_buf;
+				stat(this->to_std_string().c_str(), &state_buf);
+				return std::chrono::time_point(std::chrono::milliseconds(stat_buf.st_mtime));
+			}
+
 			using const_iterator = const std::string*;
 			using iterator = std::string*;
 
@@ -137,7 +145,7 @@ namespace lime {
 				return *this;
 			}
 
-			std::string to_std_string() noexcept { 
+			std::string to_std_string() const noexcept { 
 				std::string result;
 				for (size_t i = 0; i < heirarchy.size() - 1; i++) {
 					const std::string &element = heirarchy[i];
@@ -246,27 +254,23 @@ namespace lime {
 			path this_path(*this);
 			return this_path.get_relative_path(base_path);
 		}
+
+		std::chrono::time_point get_last_modification_time() const noexcept {
+			return path(*this).get_last_modification_time();
+		}
 	};
 
 	template <typename functor_t>
-		// TODO: Use concepts.
-	bool call_if_self_rebuild_necessary(const lime::string& src_file_path, functor_t functor) noexcept {
-		try {
-			std::filesystem::path self_exe_path("/proc/self/exe");
-			std::filesystem::path source_file_path = std::weakly_canonical(std::filesystem::path(*(const std::string*)&src_file_path));
-			if (std::filesystem::last_write_time(self_exe_path) < std::filesystem::last_write_time(source_file_path)) {
-				lime::info("self rebuild necessary, calling self rebuild function...");
-				functor();
-				lime::info("self rebuild finished");
-				return true;
-			}
-			return false;
+	bool call_if_self_rebuild_necessary(const lime::string& src_file_path_string, functor_t functor) noexcept {
+		lime::string::path self_exe_path("/proc/self/exe");
+		lime::string::path src_file_path(src_file_path_string);
+		if (self_exe_path.get_last_modification_time() < source_file_path.get_last_modification_time()) {
+			lime::info("self rebuild necessary, calling self rebuild function...");
+			functor();
+			lime::info("self rebuild finished");
+			return true;
 		}
-		catch (const std::filesystem::filesystem_error& exception) {
-			// TODO: Replace std::filesystem, see above.
-			lime::error("call_if_self_rebuild_necessary(src_file_path, functor) failed: " + exception.what());
-			exit_program();
-		}
+		return false;
 	}
 
 	template <typename functor_t>
