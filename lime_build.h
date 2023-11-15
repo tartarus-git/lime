@@ -121,10 +121,12 @@ namespace lime {
 				return result;
 			}
 
-			std::chrono::time_point get_last_modification_time() const noexcept {
+			std::chrono::system_clock::time_point get_last_modification_time() const noexcept {
 				struct stat stat_buf;
-				stat(this->to_std_string().c_str(), &state_buf);
-				return std::chrono::time_point(std::chrono::milliseconds(stat_buf.st_mtime));
+				if (stat(this->to_std_string().c_str(), &state_buf) < 0) {
+					lime::error("failed to get last modification time for " + *this);
+				}
+				return std::chrono::system_clock::from_time_t(stat_buf.st_mtime);
 			}
 
 			using const_iterator = const std::string*;
@@ -255,7 +257,7 @@ namespace lime {
 			return this_path.get_relative_path(base_path);
 		}
 
-		std::chrono::time_point get_last_modification_time() const noexcept {
+		std::chrono::system_clock::time_point get_last_modification_time() const noexcept {
 			return path(*this).get_last_modification_time();
 		}
 	};
@@ -275,24 +277,15 @@ namespace lime {
 
 	template <typename functor_t>
 	bool call_if_out_of_date(const lime::string& path, std::vector<lime::string> deps, functor_t functor) noexcept {
-		try {
-			std::filesystem::path filesystem_path = std::weakly_canonical(std::filesystem::path(*(const std::string*)&path));
-			for (const lime::string& dep : deps) {
-				std::filesystem::path dep_path = std::weakly_canonical(std::filesystem::path(*(const std::string*)&dep));
-				if (std::filesystem::last_write_time(filesystem_path) < std::filesystem::last_write_time(dep_path)) {
-					lime::info('\"' + path + '\"' + " is out-of-date, calling remedial function...");
-					functor();
-					lime::info('\"' + path + '\"' + " remedied");
-					return true;
-				}
+		for (const lime::string& dep : deps) {
+			if (filesystem_path.get_last_modification_time() < dep_path.get_last_modification_time()) {
+				lime::info('\"' + path + '\"' + " is out-of-date, calling remedial function...");
+				functor();
+				lime::info('\"' + path + '\"' + " remedied");
+				return true;
 			}
-			return false;
 		}
-		catch (const std::filesystem::filesystem_error& exception) {
-			// TODO: Replace std::filesystem, see above.
-			lime::error("call_if_self_rebuild_necessary(src_file_path, functor) failed: " + exception.what());
-			exit_program();
-		}
+		return false;
 	}
 
 	enum class inner_execute_command_return_t : uint8_t {
@@ -302,26 +295,33 @@ namespace lime {
 	}
 
 	inline inner_execute_command_return_t inner_execute_command(const lime::string& cmdline) noexcept {
-		pid_t vfork_result = vfork();
-
-		std::vector<lime::string> final_args;
-
 		std::vector<lime::string> quote_separated = cmdline.split('\"');
 
-		final_args = quote_separated[0].split(' ');
-		// TODO: Finish this up.
-		// In general, check through these latest functions to make sure you didn't mess something up because you're tired. Check the docs again as well.
-
-		for (size_t i = 1; i < quote_separated.size(); i++) {
-
+		std::vector<lime::string> final_args;
+		for (size_t i = 0; i < quote_separated.size(); i += 2) {
+			std::vector<lime::string> new_args = quote_separated[0].split(' ');
+			for (const lime::string &arg : new_args) { final_args.push_back(arg); }
+			final_args.push_back(quote_separated[i + 1]);
 		}
+
+		const char * const target_file = final_args[0].c_str();
+
+		const char * * const converted_final_args = new (std::nothrow) const char*[final_args.size() + 1];
+		for (size_t i = 0; i < final_args.size(); i++) {
+			converted_final_args[i] = final_args[i].c_str();
+		}
+		converted_final_args[final_args.size()] = nullptr;
+
+		pid_t vfork_result = vfork();
 
 		// CHILD
 		if (vfork_result == 0) {
-			if (exevp() == -1) { return inner_execute_command_return_t::INVOKE_FAILED; }
+			if (execvp(target_file, converted_final_args) == -1) { return inner_execute_command_return_t::INVOKE_FAILED; }
 		}
 		
 		// PARENT
+		delete[] converted_final_args;
+
 		if (vfork_result == -1) { return inner_execute_command_return_t::INVOKE_FAILED; }
 
 		int wstatus;
@@ -347,11 +347,6 @@ namespace lime {
 		if (argc == 1) { return false; }
 		for (unsigned int i = 1; i < argc; i++) { functor(argv[i]); }
 		return true;
-	}
-
-	template <char... matcher_specification, typename... functor_types>
-	bool string_match(const lime::string& arg, functor_types... match_actions) noexcept {
-		// TODO: implement
 	}
 
 	inline std::vector<lime::string> enum_files(const lime::string& target_dir, const lime::string& query) noexcept {
