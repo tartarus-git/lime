@@ -9,6 +9,8 @@
 #include <climits>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <dirent.h>
+#include <cglob>
 
 class lime::string;
 class lime::string::path;
@@ -251,6 +253,10 @@ namespace lime {
 			return path.get_parent_folder();
 		}
 
+		lime::string to_absolute() const noexcept { return path(*this).to_absolute(); }
+
+		bool is_directory() noexcept { return path(*this).is_directory(); }
+
 		lime::string get_relative_path(const lime::string& base) const noexcept {
 			path base_path(base);
 			path this_path(*this);
@@ -350,15 +356,51 @@ namespace lime {
 	}
 
 	inline std::vector<lime::string> enum_files(const lime::string& target_dir, const lime::string& query) noexcept {
-		// TODO: implement
+		if (!target_dir.is_directory()) {
+			lime::error("enum_files(target_dir, query) called with target_dir pointing to file. Must point to directory.");
+		}
+
+		lime::string previous_working_dir = pwd();
+		cwd(target_dir.c_str());
+
+		struct glob_t glob_result;
+		glob(query.c_str(), 0, nullptr, &glob_result);
+
+		cwd(previous_working_dir.c_str());
+
+		std::vector<lime::string> result;
+		for (size_t i = 0; i < glob_result.gl_pathc; i++) {
+			result.push_back(lime::string(glob_result.gl_pathv[i]).to_absolute());
+			// TODO: Make sure all lime function return absolute paths.
+		}
+
+		return result;
 	}
 
 	inline std::vector<lime::string> enum_files_recursive(const lime::string& target_dir, const lime::string& query) noexcept {
-		// TODO: implement
+		std::vector<lime::string> children = enum_files(target_dir, query);
+		for (size_t i = 0; i < children.length(); i++) {
+			if (children[i].is_directory()) {
+				children.erase(i);
+				children.append(enum_files_recursive(target_dir / children[i], query));
+				i--;
+			}
+		}
+		return children;
 	}
 
 	inline void create_path(const lime::string& path) noexcept {
-		// TODO: implement
+		lime::string current_path;
+		for (size_t i = 0; i < path.real_path_length(); i++) {
+			current_path /= path.real_path_part(i);
+			if (!current_path.is_directory()) {
+				open(current_path.c_str(), O_CREAT /* TODO: mode */);
+				return;
+			}
+			if (mkdir(current_path, /* TODO: mode */) == 0) {
+				continue;
+			}
+		}
 	}
 
 	inline void error(const lime::string& message) noexcept {
