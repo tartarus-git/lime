@@ -394,12 +394,14 @@ namespace lime {
 		for (size_t i = 0; i < path.real_path_length(); i++) {
 			current_path /= path.real_path_part(i);
 			if (!current_path.is_directory()) {
-				open(current_path.c_str(), O_CREAT /* TODO: mode */);
+				// TODO: Just inherit from parent folder, I think that's the best option, right?
+				if (open(current_path.c_str(), O_CREAT, S_IRWXU | S_IRGRP | S_IROTH) < 0) {
+					lime::error("failed to create the target file in lime::create_path for some reason");
+				}
 				return;
 			}
-			if (mkdir(current_path, /* TODO: mode */) == 0) {
-				continue;
-			}
+			// TODO: Just inherit from parent folder, same as above.
+			if (mkdir(current_path, S_IRWXU | S_IRGRP | S_IROTH) == 0) { continue; }
 		}
 	}
 
