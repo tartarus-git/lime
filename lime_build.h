@@ -9,6 +9,7 @@
 #include <climits>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <dirent.h>
 #include <glob.h>
 #include <chrono>
@@ -22,7 +23,9 @@ namespace lime {
 
 	class string;
 
-	// TODO: Pull those operator+ functions up here so they can be used by my own code.
+	lime::string operator+(const char *raw_str, const lime::string &lime_string) noexcept;
+	lime::string operator+(char character, const lime::string& lime_string)      noexcept;
+	lime::string operator/(const char *raw_str, const lime::string& lime_string) noexcept;
 
 	void error(const lime::string &message) noexcept;
 	void warn(const lime::string &message) noexcept;
@@ -133,8 +136,8 @@ namespace lime {
 				return std::chrono::system_clock::from_time_t(stat_buf.st_mtime);
 			}
 
-			using const_iterator = const std::string*;
-			using iterator = std::string*;
+			using const_iterator = decltype(heirarchy)::const_iterator;
+			using iterator = decltype(heirarchy)::iterator;
 
 			const_iterator begin() const noexcept { return heirarchy.begin(); }
 			iterator begin() noexcept { return heirarchy.begin(); }
@@ -155,9 +158,9 @@ namespace lime {
 				std::string result;
 				for (size_t i = 0; i < heirarchy.size() - 1; i++) {
 					const std::string &element = heirarchy[i];
-					result.push_back(element + '/');
+					result += element + '/';
 				}
-				result.push_back(*(heirarchy.end() - 1));
+				result += *(heirarchy.end() - 1);
 				return result;
 			}
 		};
@@ -165,7 +168,7 @@ namespace lime {
 		string(const path &path) noexcept : std::string(path.to_std_string()) { }
 
 		template <typename T>
-		std::vector<lime::string> inner_split(T delimiter, size_t delimiter_length) noexcept {
+		std::vector<lime::string> inner_split(T delimiter, size_t delimiter_length) const noexcept {
 			std::vector<lime::string> result;
 
 			size_t last_delimiter_index = 0;
@@ -184,14 +187,16 @@ namespace lime {
 	public:
 		static constexpr size_t npos = std::string::npos;
 
+		string() noexcept = default;
+
 		string(const char *raw_str) noexcept : std::string(raw_str) { }
 
 		string(const std::string& std_string) noexcept : std::string(std_string) { }
 		string(std::string&& std_string)      noexcept : std::string(std::move(std_string)) { }
 
-		lime::string operator+(const lime::string& right) const noexcept { return lime::string(std::string::operator+(*(const std::string*)&right)); }
+		lime::string operator+(const lime::string& right) const noexcept { return lime::string(*(const std::string*)this + *(const std::string*)&right); }
 		lime::string& operator+=(const lime::string& right) noexcept { std::string::operator+=(*(const std::string*)&right); return *this; }
-		lime::string operator+(const char *raw_str) const noexcept { return lime::string(std::string::operator+(raw_str)); }
+		lime::string operator+(const char *raw_str) const noexcept { return lime::string(*(const std::string*)this + raw_str); }
 		lime::string& operator+=(const char *raw_str) noexcept { std::string::operator+=(raw_str); return *this; }
 
 		lime::string operator/(const lime::string& right) const noexcept {
@@ -209,6 +214,7 @@ namespace lime {
 
 		// NOTE: These just bring a select few functions, which are marked private because of the above private inheritance, into the public "space".
 		using std::string::c_str;
+		using std::string::data;
 		using std::string::length;
 
 		size_t find(char character, size_t start_position)             const noexcept { return std::string::find(character, start_position); }
@@ -218,9 +224,9 @@ namespace lime {
 		size_t find(const lime::string& string, size_t start_position) const noexcept { return std::string::find(string.c_str(), start_position); }
 		size_t find(const lime::string& string)                        const noexcept { return std::string::find(string.c_str()); }
 
-		lime::string substr(size_t index, size_t length) const noexcept {
-			if (index >= length() || length > length() - index) { lime::error("substr(index, length) was called with out-of-bounds arguments"); exit_program(1); }
-			return lime::string(std::string::substr(index, length));
+		lime::string substr(size_t index, size_t substr_length) const noexcept {
+			if (index >= length() || substr_length > length() - index) { lime::error("substr(index, substr_length) was called with out-of-bounds arguments"); exit_program(1); }
+			return lime::string(std::string::substr(index, substr_length));
 		}
 		lime::string substr(size_t index) const noexcept {
 			if (index >= length()) { lime::error("substr(index) was called with out-of-bounds arguments"); exit_program(1); }
@@ -252,12 +258,12 @@ namespace lime {
 
 		lime::string get_parent_folder() const noexcept {
 			path absolute_path = path(*(const std::string*)this).to_absolute();
-			return path.get_parent_folder();
+			return absolute_path.get_parent_folder();
 		}
 
 		lime::string to_absolute() const noexcept { return path(*this).to_absolute(); }
 
-		bool is_directory() noexcept { return path(*this).is_directory(); }
+		bool is_directory() const noexcept { return path(*this).is_directory(); }
 
 		lime::string get_relative_path(const lime::string& base) const noexcept {
 			path base_path(base);
@@ -268,13 +274,36 @@ namespace lime {
 		std::chrono::system_clock::time_point get_last_modification_time() const noexcept {
 			return path(*this).get_last_modification_time();
 		}
+
+		lime::string path_part(size_t index) const noexcept {
+		}
+
+		lime::string to_minimal_absolute() const noexcept {
+			lime::string result = to_absolute();
+			lime::string
+		}
 	};
 
+	lime::string pwd() noexcept {
+		char buffer[PATH_MAX + 1];	// NOTE: +1 because NUL character
+		if (getcwd(buffer, sizeof(buffer)) != nullptr) {
+			lime::error("getcwd failed in lime::pwd(), couldn't get cwd");
+			lime::exit_program(1);
+		}
+		return lime::string(buffer);
+	}
+
+	void cd(lime::string new_directory_relative) noexcept {
+		if (chdir(new_directory_relative.c_str()) < 0) {
+			lime::error("chdir failed in lime::cd(lime::string), couldn't change cwd");
+			lime::exit_program(1);
+		}
+	}
+
 	template <typename functor_t>
-	bool call_if_self_rebuild_necessary(const lime::string& src_file_path_string, functor_t functor) noexcept {
-		lime::string::path self_exe_path("/proc/self/exe");
-		lime::string::path src_file_path(src_file_path_string);
-		if (self_exe_path.get_last_modification_time() < source_file_path.get_last_modification_time()) {
+	bool call_if_self_rebuild_necessary(const lime::string& src_file_path, functor_t functor) noexcept {
+		lime::string self_exe_path("/proc/self/exe");
+		if (self_exe_path.get_last_modification_time() < src_file_path.get_last_modification_time()) {
 			lime::info("self rebuild necessary, calling self rebuild function...");
 			functor();
 			lime::info("self rebuild finished");
@@ -286,7 +315,7 @@ namespace lime {
 	template <typename functor_t>
 	bool call_if_out_of_date(const lime::string& path, std::vector<lime::string> deps, functor_t functor) noexcept {
 		for (const lime::string& dep : deps) {
-			if (filesystem_path.get_last_modification_time() < dep_path.get_last_modification_time()) {
+			if (path.get_last_modification_time() < dep.get_last_modification_time()) {
 				lime::info('\"' + path + '\"' + " is out-of-date, calling remedial function...");
 				functor();
 				lime::info('\"' + path + '\"' + " remedied");
@@ -300,7 +329,7 @@ namespace lime {
 		SUCCESS,
 		COMMAND_FAILED,
 		INVOKE_FAILED
-	}
+	};
 
 	inline inner_execute_command_return_t inner_execute_command(const lime::string& cmdline) noexcept {
 		std::vector<lime::string> quote_separated = cmdline.split('\"');
@@ -314,9 +343,10 @@ namespace lime {
 
 		const char * const target_file = final_args[0].c_str();
 
-		const char * * const converted_final_args = new (std::nothrow) const char*[final_args.size() + 1];
+		// TODO: Figure out why the consts are the way they are for this.
+		char ** const converted_final_args = new (std::nothrow) char *[final_args.size() + 1];
 		for (size_t i = 0; i < final_args.size(); i++) {
-			converted_final_args[i] = final_args[i].c_str();
+			converted_final_args[i] = final_args[i].data();
 		}
 		converted_final_args[final_args.size()] = nullptr;
 
@@ -335,7 +365,7 @@ namespace lime {
 		int wstatus;
 		if (wait(&wstatus) == -1) { return inner_execute_command_return_t::INVOKE_FAILED; }
 		if (WIFEXITED(wstatus)) {
-			if (WEXITSTATUS() != EXIT_SUCCESS) { return inner_execute_command_return_t::COMMAND_FAILED; }
+			if (WEXITSTATUS(wstatus) != EXIT_SUCCESS) { return inner_execute_command_return_t::COMMAND_FAILED; }
 		}
 		if (WIFSIGNALED(wstatus)) { return inner_execute_command_return_t::COMMAND_FAILED; }
 		return inner_execute_command_return_t::SUCCESS;
@@ -362,13 +392,13 @@ namespace lime {
 			lime::error("enum_files(target_dir, query) called with target_dir pointing to file. Must point to directory.");
 		}
 
-		lime::string previous_working_dir = pwd();
-		cwd(target_dir.c_str());
+		lime::string previous_working_dir = lime::pwd();
+		lime::cd(target_dir.c_str());
 
-		struct glob_t glob_result;
+		glob_t glob_result;
 		glob(query.c_str(), 0, nullptr, &glob_result);
 
-		cwd(previous_working_dir.c_str());
+		lime::cd(previous_working_dir.c_str());
 
 		std::vector<lime::string> result;
 		for (size_t i = 0; i < glob_result.gl_pathc; i++) {
@@ -381,11 +411,12 @@ namespace lime {
 
 	inline std::vector<lime::string> enum_files_recursive(const lime::string& target_dir, const lime::string& query) noexcept {
 		std::vector<lime::string> children = enum_files(target_dir, query);
-		for (size_t i = 0; i < children.length(); i++) {
-			if (children[i].is_directory()) {
-				children.erase(i);
-				children.append(enum_files_recursive(target_dir / children[i], query));
-				i--;
+		for (decltype(children)::iterator it = children.begin(); it < children.end(); it++) {
+			if ((*it).is_directory()) {
+				children.erase(it);
+				std::vector<lime::string> grandchildren = enum_files_recursive(target_dir / *it, query);
+				children.insert(children.end(), grandchildren.begin(), grandchildren.end());
+				it--;
 			}
 		}
 		return children;
@@ -431,13 +462,9 @@ namespace lime {
 }
 
 inline lime::string operator+(const char *raw_str, const lime::string& lime_string) noexcept { return lime_string.insert(0, raw_str); }
-inline lime::string operator+(const char *raw_str_1, const char *raw_str_2)         noexcept { return lime::string(raw_str_1) + raw_str_2; }
 inline lime::string operator+(char character, const lime::string& lime_string)      noexcept { return lime_string.insert(0, character); }
 
-// NOTE: STANDARD FOR THESE FUNCTIONS: Won't resolve symlinks (including . & ..).
+// NOTE: STANDARD FOR THIS FUNCTION: Won't resolve symlinks (including . & ..).
 inline lime::string operator/(const char *raw_str, const lime::string& lime_string) noexcept {
-	return lime::string((lime::string::path(raw_str) / lime::string::path(lime_string));
-}
-inline lime::string operator/(const char *raw_str_1, const char *raw_str_2) noexcept {
-	return lime::string(lime::string::path(raw_str_1) / lime::string::path(raw_str_2));
+	return lime::string(raw_str) / lime_string;
 }
