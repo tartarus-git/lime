@@ -1,5 +1,6 @@
 #pragma once
 
+// TODO: Sort through these, remove unnecessary ones if they exist.
 #include <vector>
 #include <string>
 #include <cstring>
@@ -19,6 +20,8 @@
 
 namespace lime { class string; }
 
+// NOTE: These are outside of the namespace because obviously you need to be able to use them
+// from normal code, which is located outside of the namespace.
 lime::string operator+(const char *raw_str, const lime::string &lime_string) noexcept;
 lime::string operator+(char character, const lime::string& lime_string)      noexcept;
 
@@ -30,17 +33,36 @@ namespace lime {
 		std::exit(exit_code);
 	}
 
-	void error(const lime::string &message) noexcept;
-	void warn(const lime::string &message) noexcept;
-	void info(const lime::string &message) noexcept;
-	void cmd_label(const lime::string &message) noexcept;
-	void bug(const lime::string &message) noexcept;
+	// NOTE: The way these channels work is pretty much obvious, except for the difference between error and bug.
+	// Error is user error, bug is when library bug is detected by the library itself.
+	// Often, the pattern is as follows: User-facing function checks condition on input values, if wrong, output error,
+	// if not, call sub-function to handle inputs in some way. Sub-function checks again, and if the condition fails,
+	// it must be because the library called this function with the wrong inputs, because the sub-function isn't user-facing.
+	// That's a bug, so report it as such.
+	// Essentially, as the function depth increases, errors will often turn into bugs.
+	void error(const lime::string &message)		noexcept;
+	void warn(const lime::string &message)		noexcept;
+	void info(const lime::string &message)		noexcept;
+	void cmd_label(const lime::string &message)	noexcept;
+	void bug(const lime::string &message)		noexcept;
 
-	lime::string pwd() noexcept;
+	// NOTE: These functions are needed within lime::string, so that's why we've pulled
+	// the declarations up here.
+	lime::string pwd()		       noexcept;
 	void cd(lime::string target_directory) noexcept;
 
 	class string : private std::string {
+
+		// NOTE: Path handling. lime::strings don't handle paths themselves, they always construct a path
+		// out of themselves and ask it for path handling.
+
+		// NOTE: About the way we handle directories:
+		// We don't denote directories in any special ways, they're files as far as the paths are concerned.
+		// There's no trailing slash that's enforced or anything, although that is always accepted.
+		// When it comes down to whether or not something is a directory, we just ask the filesystem.
 		class path {
+
+			// NOTE: The way we do path parsing is dead-simple. Split along the slashes.
 			void parse_inner(std::vector<std::string> &result, const char &character) const noexcept {
 				switch (character) {
 				case '\\':
@@ -68,60 +90,88 @@ namespace lime {
 			}
 
 			path concatinate(const path &right) const noexcept {
+				if (right.is_absolute()) {
+					lime::bug("path::concatinate failed, right is absolute, not allowed");
+					lime::exit_program(1);
+				}
+
+				if (heirarchy.size() == 0) { return right; }
+
 				path result = *this;
-				// NOTE: If it's a directory, remove the trailing empty element.
+
+				// NOTE: If there is a trailing slash in our path, account for it.
 				if (*(result.end() - 1) == "") { result.heirarchy.pop_back(); }
+
 				for (const std::string &element : right) { result.heirarchy.push_back(element); }
+
 				return result;
 			}
 
 		public:
 			std::vector<std::string> heirarchy;
 
-			// TODO: Is leaving heirarchy empty alright? Not going to cause problems while concatinating paths and such?
 			path() noexcept { }
+
 			path(const path &other) noexcept { heirarchy = other.heirarchy; }
 
-			path(const char *input) noexcept { heirarchy = parse(input); }
 			path(const lime::string &input) noexcept { heirarchy = parse(input); }
+			path(const char *input) noexcept { heirarchy = parse(input); }
 
-			size_t num_path_parts() const noexcept {
-				return heirarchy.size();
-			}
+			size_t num_path_parts() const noexcept { return heirarchy.size(); }
 
 			std::string path_part(size_t index) const noexcept {
 				if (index >= heirarchy.size()) {
 					lime::bug("path::path_part(size_t index) called with out-of-bounds index");
-					lime::exit_program(1);
+					lime::exit_program(1);		// TODO: replace with EXIT_FAILURE
 				}
-				return heirarchy[index];
+				return (*this)[index];
 			}
 
-			path operator/(const path &right) noexcept { return this->concatinate(right); }
+			path operator/(const path &right) const noexcept {
+				if (right.is_absolute()) {
+					lime::bug("path::operator/(right) failed, right is absolute, not allowed");
+					lime::exit_program(1);
+				}
+				return concatinate(right);
+			}
 
 			bool is_absolute() const noexcept {
-				return heirarchy[0] == "";
+				if (heirarchy.size() == 0) { return false; }
+				return (*this)[0] == "";
 			}
 
 			path to_absolute() const noexcept {
 				if (is_absolute()) { return *this; }
 
-				char cwd[PATH_MAX + 1];
+				char cwd[PATH_MAX + 1];	// NOTE: +1 because of trailing NUL, necessary says stackoverflow comment
 				if (getcwd(cwd, sizeof(cwd)) == nullptr) {
-					lime::error("lime::string::path::to_absolute() failed");
-					exit_program(1);
+					lime::bug("path::to_absolute() failed, getcwd failed, general failure");
+					lime::exit_program(1);
 				}
 
 				return path(cwd) / *this;
 			}
 
 			path get_parent_folder() const noexcept {
+				if (heirarchy.size() <= 1) {
+					lime::bug("path::get_parent_folder() failed, heirarchy.size() <= 1");
+					lime::exit_program(1);
+				}
+
 				path result = *this;
+
 				if (*(heirarchy.end() - 1) == "") {
+					if (heirarchy.size() <= 2) {
+						lime::bug("path::get_parent_folder() failed, last=\"\" and size() <= 2");
+						lime::exit_program(1);
+					}
+
 					result.heirarchy.erase(heirarchy.end() - 2);
 					return result;
 				}
-				*(result.heirarchy.end() - 1) = "";
+
+				result.heirarchy.pop_back();
+
 				return result;
 			}
 
@@ -169,6 +219,14 @@ namespace lime {
 				return std::chrono::system_clock::from_time_t(stat_buf.st_mtime);
 			}
 
+			// NOTE: For some reason, the vector iterators don't play nice with pointers,
+			// so have to use the vector iterators as our iterators, which makes more sense anyway.
+			// It's what we should be doing anyway. I just assumed std::vector used pointers as iterators,
+			// but I guess that's totally implementation defined. For strange architectures with strange memory
+			// geometries, it makes sense that they wouldn't be pointers.
+			// Still, they should be representable by pointers on my system, so it surprises me that they're not.
+			// I guess it's a safety feature to stop you from assuming that they're pointers, because they're not,
+			// even when they could be.
 			using const_iterator = decltype(heirarchy)::const_iterator;
 			using iterator = decltype(heirarchy)::iterator;
 
@@ -176,6 +234,21 @@ namespace lime {
 			iterator begin() noexcept { return heirarchy.begin(); }
 			const_iterator end() const noexcept { return heirarchy.end(); }
 			iterator end() noexcept { return heirarchy.end(); }
+
+			const std::string& operator[](size_t index) const noexcept {
+				if (index >= heirarchy.size()) {
+					lime::bug("path::operator[] const failed, index out-of-bounds");
+					lime::exit_program(1);
+				}
+				return heirarchy[index];
+			}
+			std::string& operator[](size_t index) noexcept {
+				if (index >= heirarchy.size()) {
+					lime::bug("path::operator[] failed, index out-of-bounds");
+					lime::exit_programs(1);
+				}
+				return heirarchy[index];
+			}
 
 			path& operator=(const path &right) noexcept {
 				heirarchy = right.heirarchy;
@@ -190,7 +263,7 @@ namespace lime {
 			std::string to_std_string() const noexcept { 
 				std::string result;
 				for (size_t i = 0; i < heirarchy.size() - 1; i++) {
-					const std::string &element = heirarchy[i];
+					const std::string &element = (*this)[i];
 					result += element + '/';
 				}
 				result += *(heirarchy.end() - 1);
