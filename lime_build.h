@@ -215,8 +215,12 @@ namespace lime {
 
 		lime::string operator+(const lime::string& right) const noexcept { return lime::string(*(const std::string*)this + *(const std::string*)&right); }
 		lime::string& operator+=(const lime::string& right) noexcept { std::string::operator+=(*(const std::string*)&right); return *this; }
+
 		lime::string operator+(const char *raw_str) const noexcept { return lime::string(*(const std::string*)this + raw_str); }
 		lime::string& operator+=(const char *raw_str) noexcept { std::string::operator+=(raw_str); return *this; }
+
+		lime::string operator+(char character) const noexcept { return lime::string(*(const std::string*)this + character); }
+		lime::string& operator+=(char character) noexcept { std::string::operator+=(character); return *this; }
 
 		lime::string operator/(const lime::string& right) const noexcept {
 			return lime::string(path(*(const std::string*)this) / path(*(const lime::string*)&right));
@@ -257,19 +261,19 @@ namespace lime {
 		std::vector<lime::string> split(const lime::string& delimiter) const noexcept { return inner_split(delimiter.c_str(), delimiter.length()); }
 
 		lime::string insert(size_t index, const char *string) const noexcept {
-			if (index >= length()) { lime::error("insert(index, string) was called with out-of-bounds arguments"); exit_program(1); }
+			if (index > length()) { lime::error("insert(index, string) was called with out-of-bounds arguments"); exit_program(1); }
 			lime::string result = *this;
 			result.std::string::insert(index, string);
 			return result;
 		}
 		lime::string insert(size_t index, char character) const noexcept {
-			if (index >= length()) { lime::error("insert(index, character) was called with out-of-bounds arguments"); exit_program(1); }
+			if (index > length()) { lime::error("insert(index, character) was called with out-of-bounds arguments"); exit_program(1); }
 			lime::string result = *this;
 			result.std::string::insert(index, &character, 1);
 			return result;
 		}
 		lime::string insert(size_t index, const lime::string& string) const noexcept {
-			if (index >= length()) { lime::error("insert(index, string) was called with out-of-bounds arguments"); exit_program(1); }
+			if (index > length()) { lime::error("insert(index, string) was called with out-of-bounds arguments"); exit_program(1); }
 			lime::string result = *this;
 			result.std::string::insert(index, string.c_str(), string.length());
 			return result;
@@ -318,7 +322,7 @@ namespace lime {
 
 	lime::string pwd() noexcept {
 		char buffer[PATH_MAX + 1];	// NOTE: +1 because NUL character
-		if (getcwd(buffer, sizeof(buffer)) != nullptr) {
+		if (getcwd(buffer, sizeof(buffer)) == nullptr) {
 			lime::error("getcwd failed in lime::pwd(), couldn't get cwd");
 			lime::exit_program(1);
 		}
@@ -420,6 +424,9 @@ namespace lime {
 	}
 
 	inline std::vector<lime::string> enum_files(const lime::string& target_dir, const lime::string& query) noexcept {
+		// TODO: This is a bad solution. Our method of denoting directories is bad in general.
+		// We gotta just assume everything can be a file or a directory and let the library functions tell us if the tail
+		// element is a file or a directory when it comes down to it.
 		if (!target_dir.is_directory()) {
 			lime::error("enum_files(target_dir, query) called with target_dir pointing to file. Must point to directory.");
 		}
@@ -444,7 +451,7 @@ namespace lime {
 	inline std::vector<lime::string> enum_files_recursive(const lime::string& target_dir, const lime::string& query) noexcept {
 		std::vector<lime::string> children = enum_files(target_dir, query);
 		for (decltype(children)::iterator it = children.begin(); it < children.end(); it++) {
-			if ((*it).is_directory()) {
+			if ((*it).is_directory()) {		// TODO: This doesn't work like you want it to. You gotta make some changes. It'll simplify everything as well.
 				children.erase(it);
 				std::vector<lime::string> grandchildren = enum_files_recursive(target_dir / *it, query);
 				children.insert(children.end(), grandchildren.begin(), grandchildren.end());
@@ -481,28 +488,28 @@ namespace lime {
 
 	inline void error(const lime::string& message) noexcept {
 		fflush(stdout);
-		lime::string final_message = "[ERROR]: " + message;
+		lime::string final_message = "[ERROR]: " + message + '\n';
 		write(STDERR_FILENO, final_message.c_str(), final_message.length() * sizeof(char));
 	}
 
 	inline void warn(const lime::string& message) noexcept {
-		lime::string final_message = "[WARNING]: " + message;
+		lime::string final_message = "[WARNING]: " + message + '\n';
 		fwrite(final_message.c_str(), sizeof(char), final_message.length(), stdout);
 	}
 
 	inline void info(const lime::string& message) noexcept {
-		lime::string final_message = "[INFO]: " + message;
+		lime::string final_message = "[INFO]: " + message + '\n';
 		fwrite(final_message.c_str(), sizeof(char), final_message.length(), stdout);
 	}
 
 	inline void cmd_label(const lime::string& message) noexcept {
-		lime::string final_message = "[CMD]: " + message;
+		lime::string final_message = "[CMD]: " + message + '\n';
 		fwrite(final_message.c_str(), sizeof(char), final_message.length(), stdout);
 	}
 
 	inline void bug(const lime::string &message) noexcept {
 		fflush(stdout);
-		lime::string final_message = "[BUG DETECTED]: " + message;
+		lime::string final_message = "[BUG DETECTED]: " + message + '\n';
 		write(STDERR_FILENO, final_message.c_str(), final_message.length() * sizeof(char));
 	}
 
