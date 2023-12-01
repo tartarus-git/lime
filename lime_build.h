@@ -17,17 +17,18 @@
 #include <cerrno>
 #include <fcntl.h>
 
+namespace lime { class string; }
+
+lime::string operator+(const char *raw_str, const lime::string &lime_string) noexcept;
+lime::string operator+(char character, const lime::string& lime_string)      noexcept;
+
+lime::string operator/(const char *raw_str, const lime::string& lime_string) noexcept;
+
 namespace lime {
 
 	[[noreturn]] inline void exit_program(int exit_code) noexcept {
 		std::exit(exit_code);
 	}
-
-	class string;
-
-	lime::string operator+(const char *raw_str, const lime::string &lime_string) noexcept;
-	lime::string operator+(char character, const lime::string& lime_string)      noexcept;
-	lime::string operator/(const char *raw_str, const lime::string& lime_string) noexcept;
 
 	void error(const lime::string &message) noexcept;
 	void warn(const lime::string &message) noexcept;
@@ -481,7 +482,7 @@ namespace lime {
 	inline void error(const lime::string& message) noexcept {
 		fflush(stdout);
 		lime::string final_message = "[ERROR]: " + message;
-		write(STDOUT_FILENO, final_message.c_str(), final_message.length() * sizeof(char));
+		write(STDERR_FILENO, final_message.c_str(), final_message.length() * sizeof(char));
 	}
 
 	inline void warn(const lime::string& message) noexcept {
@@ -500,13 +501,14 @@ namespace lime {
 	}
 
 	inline void bug(const lime::string &message) noexcept {
+		fflush(stdout);
 		lime::string final_message = "[BUG DETECTED]: " + message;
-		fwrite(final_message.c_str(), sizeof(char), final_message.length(), stdout);
+		write(STDERR_FILENO, final_message.c_str(), final_message.length() * sizeof(char));
 	}
 
 }
 
-inline lime::string operator+(const char *raw_str, const lime::string& lime_string) noexcept { return lime_string.insert(0, raw_str); }
+inline lime::string operator+(const char *raw_str, const lime::string &lime_string) noexcept { return lime_string.insert(0, raw_str); }
 inline lime::string operator+(char character, const lime::string& lime_string)      noexcept { return lime_string.insert(0, character); }
 
 inline lime::string operator/(const char *raw_str, const lime::string& lime_string) noexcept {

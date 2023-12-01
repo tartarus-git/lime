@@ -1,3 +1,4 @@
 #include "lime_build.h"
 
-int main() { }
+int main() {
+}
