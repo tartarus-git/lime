@@ -24,6 +24,7 @@ int main() {
 	for (const lime::string &file : enumerated_files) {
 		lime::info(file);
 	}
+	lime::info("");
 	std::vector<lime::string> enumerated_files_recursive = lime::enum_files_recursive(cwd_relative, "*");
 	for (const lime::string &file : enumerated_files_recursive) {
 		lime::info(file);

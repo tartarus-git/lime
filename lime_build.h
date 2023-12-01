@@ -99,12 +99,19 @@ namespace lime {
 
 			path operator/(const path &right) noexcept { return this->concatinate(right); }
 
+			bool is_absolute() const noexcept {
+				return heirarchy[0] == "";
+			}
+
 			path to_absolute() const noexcept {
+				if (is_absolute()) { return *this; }
+
 				char cwd[PATH_MAX + 1];
 				if (getcwd(cwd, sizeof(cwd)) == nullptr) {
 					lime::error("lime::string::path::to_absolute() failed");
 					exit_program(1);
 				}
+
 				return path(cwd) / *this;
 			}
 
@@ -118,15 +125,9 @@ namespace lime {
 				return result;
 			}
 
-			bool is_directory() const noexcept { return *(heirarchy.end() - 1) == ""; }
-
 			path get_relative_path(const path &base_path) const noexcept {
-				if (base_path.is_directory() == false) {
-					lime::error("lime::string::path::get_relative_path called with non-directory base_path");
-				}
-
-				const path absolute_base_path = base_path.to_absolute();
-				const path absolute_this_path = this->to_absolute();
+				const path absolute_base_path = base_path.to_canonicalized_absolute();
+				const path absolute_this_path = this->to_canonicalized_absolute();
 
 				const_iterator absolute_base_path_ptr = absolute_base_path.begin();
 				const_iterator absolute_this_path_ptr = absolute_this_path.begin();
@@ -144,6 +145,14 @@ namespace lime {
 					result.heirarchy.push_back(".");
 					result.heirarchy.push_back("");
 				}
+				return result;
+			}
+
+			path to_canonicalized_absolute() const noexcept {
+				lime::string previous_dir = lime::pwd();
+				lime::cd(to_std_string());
+				lime::string result = lime::pwd();
+				lime::cd(previous_dir);
 				return result;
 			}
 
@@ -284,9 +293,39 @@ namespace lime {
 			return absolute_path.get_parent_folder();
 		}
 
-		lime::string to_absolute() const noexcept { return path(*this).to_absolute(); }
+		bool file_exists() const noexcept {
+			int fd = open(c_str(), O_RDONLY);
+			if (fd < 0) {
+				switch (errno) {
+				case EACCES:
+					return false;
+				default:
+					lime::error("lime::file_exists() failed, general failure");
+					exit_program(1);
+				}
+			}
+			if (close(fd) < 0) {
+				lime::error("lime::file_exists() failed, close failed, general failure");
+				exit_program(1);
+			}
+			return true;
+		}
 
-		bool is_directory() const noexcept { return path(*this).is_directory(); }
+		bool is_existing_directory() const noexcept {
+			if (!file_exists()) { return false; }
+
+			struct stat stat_buf;
+			if (stat(c_str(), &stat_buf) < 0) {
+				lime::error("lime::is_existing_directory() failed, stat failed, general failure");
+				exit_program(1);
+			}
+
+			return S_ISDIR(stat_buf.st_mode);
+		}
+
+		bool is_absolute() const noexcept { return path(*this).is_absolute(); }
+
+		lime::string to_absolute() const noexcept { return path(*this).to_absolute(); }
 
 		lime::string get_relative_path(const lime::string& base) const noexcept {
 			path base_path(base);
@@ -331,8 +370,14 @@ namespace lime {
 
 	void cd(lime::string new_directory) noexcept {
 		if (chdir(new_directory.c_str()) < 0) {
-			lime::error("chdir failed in lime::cd(lime::string), couldn't change cwd");
-			lime::exit_program(1);
+			switch (errno) {
+			case ENOTDIR:
+				lime::error("lime::cd failed, at least one component of new_directory is a file");
+				lime::exit_program(1);
+			default:
+				lime::error("lime:cd failed, general failure");
+				lime::exit_program(1);
+			}
 		}
 	}
 
@@ -424,20 +469,12 @@ namespace lime {
 	}
 
 	inline std::vector<lime::string> enum_files(const lime::string& target_dir, const lime::string& query) noexcept {
-		// TODO: This is a bad solution. Our method of denoting directories is bad in general.
-		// We gotta just assume everything can be a file or a directory and let the library functions tell us if the tail
-		// element is a file or a directory when it comes down to it.
-		if (!target_dir.is_directory()) {
-			lime::error("enum_files(target_dir, query) called with target_dir pointing to file. Must point to directory.");
-		}
-
 		lime::string previous_working_dir = lime::pwd();
 		lime::cd(target_dir.c_str());
 
 		glob_t glob_result;
+		// TODO: Fix that thing where if glob spec if an absolute path then it'll look in root instead. Make sure glob path isn't absolute.
 		glob(query.c_str(), 0, nullptr, &glob_result);
-
-		lime::cd(previous_working_dir.c_str());
 
 		std::vector<lime::string> result;
 		for (size_t i = 0; i < glob_result.gl_pathc; i++) {
@@ -445,15 +482,19 @@ namespace lime {
 			// TODO: Make sure all lime function return absolute paths.
 		}
 
+		// NOTE: We do this here because to_absolute in the above for loop needs the cwd to be a certain way.
+		lime::cd(previous_working_dir.c_str());
+
 		return result;
 	}
 
 	inline std::vector<lime::string> enum_files_recursive(const lime::string& target_dir, const lime::string& query) noexcept {
 		std::vector<lime::string> children = enum_files(target_dir, query);
 		for (decltype(children)::iterator it = children.begin(); it < children.end(); it++) {
-			if ((*it).is_directory()) {		// TODO: This doesn't work like you want it to. You gotta make some changes. It'll simplify everything as well.
+			lime::info(*it);
+			if ((*it).is_existing_directory()) {
+				std::vector<lime::string> grandchildren = enum_files_recursive(*it, query);
 				children.erase(it);
-				std::vector<lime::string> grandchildren = enum_files_recursive(target_dir / *it, query);
 				children.insert(children.end(), grandchildren.begin(), grandchildren.end());
 				it--;
 			}
@@ -467,7 +508,7 @@ namespace lime {
 		lime::string current_path;
 		for (size_t i = 0; i < path.num_path_parts(); i++) {
 			current_path /= path.path_part(i);
-			if (!current_path.is_directory()) {
+			if (!current_path.is_existing_directory()) {
 				// TODO: Just inherit from parent folder, I think that's the best option, right?
 				if (open(current_path.c_str(), O_CREAT, S_IRWXU | S_IRGRP | S_IROTH) < 0) {
 					lime::error("failed to create the target file in lime::create_path for some reason");
