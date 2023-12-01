@@ -1,4 +1,5 @@
-COMPILER := clang++
+COMPILER := g++
+# doesn't work with clang up there, compiler bug probably, REPORT!!! TODO
 
 .PHONY: all build header test clean
 
