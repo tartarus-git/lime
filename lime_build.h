@@ -14,6 +14,8 @@
 #include <glob.h>
 #include <chrono>
 #include <cstdlib>
+#include <cerrno>
+#include <fcntl.h>
 
 namespace lime {
 
@@ -31,6 +33,10 @@ namespace lime {
 	void warn(const lime::string &message) noexcept;
 	void info(const lime::string &message) noexcept;
 	void cmd_label(const lime::string &message) noexcept;
+	void bug(const lime::string &message) noexcept;
+
+	lime::string pwd() noexcept;
+	void cd(lime::string target_directory) noexcept;
 
 	class string : private std::string {
 		class path {
@@ -77,6 +83,18 @@ namespace lime {
 
 			path(const char *input) noexcept { heirarchy = parse(input); }
 			path(const lime::string &input) noexcept { heirarchy = parse(input); }
+
+			size_t num_path_parts() const noexcept {
+				return heirarchy.size();
+			}
+
+			std::string path_part(size_t index) const noexcept {
+				if (index >= heirarchy.size()) {
+					lime::bug("path::path_part(size_t index) called with out-of-bounds index");
+					lime::exit_program(1);
+				}
+				return heirarchy[index];
+			}
 
 			path operator/(const path &right) noexcept { return this->concatinate(right); }
 
@@ -275,12 +293,25 @@ namespace lime {
 			return path(*this).get_last_modification_time();
 		}
 
-		lime::string path_part(size_t index) const noexcept {
+		size_t num_path_parts() const noexcept {
+			return path(*this).num_path_parts();
 		}
 
-		lime::string to_minimal_absolute() const noexcept {
-			lime::string result = to_absolute();
-			lime::string
+		lime::string path_part(size_t index) const noexcept {
+			path temp_path(*this);
+			if (index >= temp_path.num_path_parts()) {
+				lime::error("lime::string::path_part(index) called with out-of-bounds index");
+				lime::exit_program(1);
+			}
+			return temp_path.path_part(index);
+		}
+
+		lime::string to_canonicalized_absolute() const noexcept {
+			lime::string previous_dir = lime::pwd();
+			lime::cd(*this);
+			lime::string result = lime::pwd();
+			lime::cd(previous_dir);
+			return result;
 		}
 	};
 
@@ -293,8 +324,8 @@ namespace lime {
 		return lime::string(buffer);
 	}
 
-	void cd(lime::string new_directory_relative) noexcept {
-		if (chdir(new_directory_relative.c_str()) < 0) {
+	void cd(lime::string new_directory) noexcept {
+		if (chdir(new_directory.c_str()) < 0) {
 			lime::error("chdir failed in lime::cd(lime::string), couldn't change cwd");
 			lime::exit_program(1);
 		}
@@ -423,9 +454,11 @@ namespace lime {
 	}
 
 	inline void create_path(const lime::string& path) noexcept {
+		// TODO: create this.
+		//lime::string canonicalized_path = path.canonicalize();
 		lime::string current_path;
-		for (size_t i = 0; i < path.real_path_length(); i++) {
-			current_path /= path.real_path_part(i);
+		for (size_t i = 0; i < path.num_path_parts(); i++) {
+			current_path /= path.path_part(i);
 			if (!current_path.is_directory()) {
 				// TODO: Just inherit from parent folder, I think that's the best option, right?
 				if (open(current_path.c_str(), O_CREAT, S_IRWXU | S_IRGRP | S_IROTH) < 0) {
@@ -434,7 +467,14 @@ namespace lime {
 				return;
 			}
 			// TODO: Just inherit from parent folder, same as above.
-			if (mkdir(current_path, S_IRWXU | S_IRGRP | S_IROTH) == 0) { continue; }
+			if (mkdir(current_path.c_str(), S_IRWXU | S_IRGRP | S_IROTH) < 0) {
+				switch (errno) {
+				case EEXIST: continue;
+				default:
+					lime::error("mkdir failed in lime::create_path, general failure");
+					lime::exit_program(1);
+				}
+			}
 		}
 	}
 
@@ -459,12 +499,16 @@ namespace lime {
 		fwrite(final_message.c_str(), sizeof(char), final_message.length(), stdout);
 	}
 
+	inline void bug(const lime::string &message) noexcept {
+		lime::string final_message = "[BUG DETECTED]: " + message;
+		fwrite(final_message.c_str(), sizeof(char), final_message.length(), stdout);
+	}
+
 }
 
 inline lime::string operator+(const char *raw_str, const lime::string& lime_string) noexcept { return lime_string.insert(0, raw_str); }
 inline lime::string operator+(char character, const lime::string& lime_string)      noexcept { return lime_string.insert(0, character); }
 
-// NOTE: STANDARD FOR THIS FUNCTION: Won't resolve symlinks (including . & ..).
 inline lime::string operator/(const char *raw_str, const lime::string& lime_string) noexcept {
 	return lime::string(raw_str) / lime_string;
 }
