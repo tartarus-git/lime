@@ -156,6 +156,11 @@ namespace lime {
 				return result;
 			}
 
+			lime::string get_filename() const noexcept {
+				if (*(heirarchy.end() - 1) == "") { return *(heirarchy.end() - 2); }
+				return *(heirarchy.end() - 1);
+			}
+
 			std::chrono::system_clock::time_point get_last_modification_time() const noexcept {
 				struct stat stat_buf;
 				if (stat(this->to_std_string().c_str(), &stat_buf) < 0) {
@@ -244,6 +249,17 @@ namespace lime {
 			return (*this = operator/(raw_str));
 		}
 
+		bool operator==(const lime::string &other) const noexcept {
+			return to_std_string() == other.to_std_string();
+		}
+		bool operator==(const char *other) const noexcept {
+			return to_std_string() == other;
+		}
+
+		std::string to_std_string() const noexcept {
+			return *(const std::string*)this;
+		}
+
 		// NOTE: These just bring a select few functions, which are marked private because of the above private inheritance, into the public "space".
 		using std::string::c_str;
 		using std::string::data;
@@ -291,6 +307,10 @@ namespace lime {
 		lime::string get_parent_folder() const noexcept {
 			path absolute_path = path(*(const std::string*)this).to_absolute();
 			return absolute_path.get_parent_folder();
+		}
+
+		lime::string get_filename() const noexcept {
+			return path(*this).get_filename();
 		}
 
 		bool file_exists() const noexcept {
@@ -474,13 +494,21 @@ namespace lime {
 
 		glob_t glob_result;
 		// TODO: Fix that thing where if glob spec if an absolute path then it'll look in root instead. Make sure glob path isn't absolute.
-		glob(query.c_str(), 0, nullptr, &glob_result);
+		if (glob(query.c_str(), 0, nullptr, &glob_result) != 0) {
+			lime::error("lime::enum_files failed, glob failed, general failure");
+			lime::exit_program(1);
+		}
 
 		std::vector<lime::string> result;
 		for (size_t i = 0; i < glob_result.gl_pathc; i++) {
-			result.push_back(lime::string(glob_result.gl_pathv[i]).to_absolute());
+			lime::string matched_file = lime::string(glob_result.gl_pathv[i]);
+			lime::string matched_file_filename = matched_file.get_filename();
+			if (matched_file_filename == "." || matched_file_filename == "..") { continue; }
+			result.push_back(matched_file.to_absolute());
 			// TODO: Make sure all lime function return absolute paths.
 		}
+
+		globfree(&glob_result);
 
 		// NOTE: We do this here because to_absolute in the above for loop needs the cwd to be a certain way.
 		lime::cd(previous_working_dir.c_str());
@@ -491,7 +519,6 @@ namespace lime {
 	inline std::vector<lime::string> enum_files_recursive(const lime::string& target_dir, const lime::string& query) noexcept {
 		std::vector<lime::string> children = enum_files(target_dir, query);
 		for (decltype(children)::iterator it = children.begin(); it < children.end(); it++) {
-			lime::info(*it);
 			if ((*it).is_existing_directory()) {
 				std::vector<lime::string> grandchildren = enum_files_recursive(*it, query);
 				children.erase(it);
