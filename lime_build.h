@@ -117,20 +117,12 @@ namespace lime {
 			path(const lime::string &input) noexcept { heirarchy = parse(input); }
 			path(const char *input) noexcept { heirarchy = parse(input); }
 
-			size_t num_path_parts() const noexcept { return heirarchy.size(); }
-
-			std::string path_part(size_t index) const noexcept {
-				if (index >= heirarchy.size()) {
-					lime::bug("path::path_part(size_t index) called with out-of-bounds index");
-					lime::exit_program(1);		// TODO: replace with EXIT_FAILURE
-				}
-				return (*this)[index];
-			}
+			size_t size() const noexcept { return heirarchy.size(); }
 
 			path operator/(const path &right) const noexcept {
 				if (right.is_absolute()) {
 					lime::bug("path::operator/(right) failed, right is absolute, not allowed");
-					lime::exit_program(1);
+					lime::exit_program(1);		// TODO: replace with EXIT_FAILURE
 				}
 				return concatinate(right);
 			}
@@ -175,47 +167,97 @@ namespace lime {
 				return result;
 			}
 
-			path get_relative_path(const path &base_path) const noexcept {
-				const path absolute_base_path = base_path.to_canonicalized_absolute();
-				const path absolute_this_path = this->to_canonicalized_absolute();
+			// TODO: Make this work with paths that aren't on the filesystem.
+			// You gotta make canonicalized_absolute canonicalize as far as possible and then return what it could do.
+			path get_relative_path(const path &base_path_original) const noexcept {
+				check_path_validity(base_path_original, "base_path_original", "path::get_relative_path");
+				check_this_validity("path::get_relative_path");
 
-				const_iterator absolute_base_path_ptr = absolute_base_path.begin();
-				const_iterator absolute_this_path_ptr = absolute_this_path.begin();
-				for (; *absolute_base_path_ptr == *absolute_this_path_ptr
-				       && absolute_base_path_ptr < absolute_base_path.end()
-				       && absolute_this_path_ptr < absolute_this_path.end();
-					absolute_base_path_ptr++, absolute_this_path_ptr++)
-				{ }
+				const path base_path = base_path_original.to_canonicalized_absolute();
+				const path this_path = this->to_canonicalized_absolute();
+
+				const_iterator base_path_ptr = base_path.begin();
+				const_iterator this_path_ptr = this_path.begin();
+
+				for (; *base_path_ptr == *this_path_ptr
+				       && base_path_ptr < base_path.end();
+				     base_path_ptr++, this_path_ptr++)
+				{
+					if (this_path_ptr == this_path.end() - 1) {
+
+						if (base_path_ptr == base_path.end() - 1) { return { "." }; }
+
+						lime::bug("path::get_relative_path failed, base_path more specific than this_path");
+						lime::exit_program(1);
+
+					}
+				}
 
 				path result;
-				for (; absolute_this_path_ptr < absolute_this_path.end(); absolute_this_path_ptr++) {
-					result.heirarchy.push_back(*absolute_this_path_ptr);
+
+				for (; this_path_ptr < this_path.end(); this_path_ptr++) {
+					result.heirarchy.push_back(*this_path_ptr);
 				}
-				if (result.heirarchy.size() == 0) {
-					result.heirarchy.push_back(".");
-					result.heirarchy.push_back("");
+
+				if (result.size() == 0) {
+					lime::bug("path::get_relative_path failed, somehow result.size()=0");
+					lime::exit_program(1);
 				}
+
 				return result;
 			}
 
 			path to_canonicalized_absolute() const noexcept {
-				lime::string previous_dir = lime::pwd();
-				lime::cd(to_std_string());
-				lime::string result = lime::pwd();
-				lime::cd(previous_dir);
+				check_this_validity("path::canonicalized_absolute");
+
+				return lime::string(this->to_std_string()).to_canonicalized_absolute();
+			}
+
+			path strip_trailing_slash() const noexcept {
+				check_this_validity("path::strip_trailing_slash");
+
+				path result = *this;
+				// TODO: Think about the functions that path should have. Should it have it's own pop_back().
+				// Should we just inherit from std::vector<std::string>?
+				// Probably not, but think about it.
+				if (*(result.end() - 1) == "") { result.heirarchy.pop_back(); }
 				return result;
 			}
 
-			lime::string get_filename() const noexcept {
-				if (*(heirarchy.end() - 1) == "") { return *(heirarchy.end() - 2); }
-				return *(heirarchy.end() - 1);
+			std::string get_filename() const noexcept {
+				check_this_validity("path::get_filename");
+
+				path normalized = this->strip_trailing_slash();
+				return *(normalized.end() - 1);
+			}
+
+			void check_path_validity(const path &p, const lime::string &p_name, const lime::string &function_name) const noexcept {
+				if (p.size() == 0) {
+					lime::bug(function_name + " failed, " + p_name + " empty");
+					lime::exit_program(1);
+				}
+				if (p.size() == 1) {
+					if (p[0] == "") {
+						lime::bug(function_name + " failed, single empty element invalid in " + p_name);
+						lime::exit_program(1);
+					}
+				}
+			}
+
+			void check_this_validity(const lime::string &function_name) const noexcept {
+				return check_path_validity(*this, "this", function_name);
 			}
 
 			std::chrono::system_clock::time_point get_last_modification_time() const noexcept {
+				check_this_validity("path::get_last_modification_time");
+
 				struct stat stat_buf;
+
 				if (stat(this->to_std_string().c_str(), &stat_buf) < 0) {
-					lime::error("failed to get last modification time for " + *this);
+					lime::bug("path::get_last_modification_time for " + this->to_std_string() + "failed, general failure");
+					lime::exit_program(1);
 				}
+
 				return std::chrono::system_clock::from_time_t(stat_buf.st_mtime);
 			}
 
@@ -245,7 +287,7 @@ namespace lime {
 			std::string& operator[](size_t index) noexcept {
 				if (index >= heirarchy.size()) {
 					lime::bug("path::operator[] failed, index out-of-bounds");
-					lime::exit_programs(1);
+					lime::exit_program(1);
 				}
 				return heirarchy[index];
 			}
@@ -270,6 +312,8 @@ namespace lime {
 				return result;
 			}
 		};
+
+		// TODO: FROM HERE
 
 		string(const path &path) noexcept : std::string(path.to_std_string()) { }
 
@@ -431,24 +475,39 @@ namespace lime {
 		}
 
 		size_t num_path_parts() const noexcept {
-			return path(*this).num_path_parts();
+			return path(*this).size();
 		}
 
 		lime::string path_part(size_t index) const noexcept {
 			path temp_path(*this);
-			if (index >= temp_path.num_path_parts()) {
+			if (index >= temp_path.size()) {
 				lime::error("lime::string::path_part(index) called with out-of-bounds index");
 				lime::exit_program(1);
 			}
-			return temp_path.path_part(index);
+			return temp_path[index];
 		}
 
 		lime::string to_canonicalized_absolute() const noexcept {
+			if (this->length() == 0) {
+				lime::error("lime::string::to_canonicalized_absolute() failed, string empty");
+				lime::exit_program(1);
+			}
+
 			lime::string previous_dir = lime::pwd();
 			lime::cd(*this);
 			lime::string result = lime::pwd();
 			lime::cd(previous_dir);
-			return result;
+
+			return result.strip_trailing_slash();
+		}
+
+		lime::string strip_trailing_slash() const noexcept {
+			if (this->length() == 0) {
+				lime::error("lime::string::strip_trailing_slash() failed, string empty");
+				lime::exit_program(1);
+			}
+
+			return path(*this).strip_trailing_slash();
 		}
 	};
 
@@ -468,7 +527,7 @@ namespace lime {
 				lime::error("lime::cd failed, at least one component of new_directory is a file");
 				lime::exit_program(1);
 			default:
-				lime::error("lime:cd failed, general failure");
+				lime::error("lime:cd failed, general failure, platform explanation: " + lime::string(strerror(errno)));
 				lime::exit_program(1);
 			}
 		}

@@ -1,5 +1,7 @@
 #include "lime_build.h"
 
+#include <ctime>
+
 int main() {
 	lime::info("testing output methods...");
 	lime::info("test");
@@ -34,4 +36,25 @@ int main() {
 	for (const lime::string &file : enumerated_dotfiles_recursive) {
 		lime::info(file);
 	}
+
+	lime::info("");
+	lime::info("relative path testing");
+	lime::string abs_1 = "../..";
+	lime::info(abs_1);
+	lime::string abs_2 = "./.";
+	lime::info(abs_2);
+	lime::info(abs_2.get_relative_path(abs_1));
+
+	lime::info("");
+	lime::info("modification time testing");
+	lime::string target_file = "lime_build.h";
+	std::chrono::system_clock::time_point modification_time = target_file.get_last_modification_time();
+	std::time_t c_time = std::chrono::system_clock::to_time_t(modification_time);
+	const char *time_output = std::ctime(&c_time);
+	lime::info(time_output);
+
+	lime::info("");
+	lime::info("filename");
+	lime::info("./bin/../lime_build.h");
+	lime::info(lime::string("./bin/../lime_build.h").get_filename());
 }
