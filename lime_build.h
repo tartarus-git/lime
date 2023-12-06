@@ -119,6 +119,8 @@ namespace lime {
 
 			size_t size() const noexcept { return heirarchy.size(); }
 
+			bool is_empty() const noexcept { return size() == 0; }	// TODO: check if vector has an is_empty()-like function
+
 			path operator/(const path &right) const noexcept {
 				if (right.is_absolute()) {
 					lime::bug("path::operator/(right) failed, right is absolute, not allowed");
@@ -144,6 +146,39 @@ namespace lime {
 				return path(cwd) / *this;
 			}
 
+			path to_canonicalized_absolute() const noexcept {
+				path result;
+				for (const std::string &element : *this) {
+					result.push_back(element);
+
+					while (true) {
+						char buffer[PATH_MAX + 1];
+						ssize_t bytes_read = readlink(path.to_std_string().c_str(), buffer, sizeof(buffer))
+
+						if (bytes_read < 0) {
+							switch (errno) {
+							default: return path();
+							case EACCES: break;
+							case EINVAL: break;
+							}
+							break;
+						}
+						if (bytes_read == 0) {
+							lime::bug("path::canonicalize failed, bytes_read=0");
+							lime::exit_program(1);
+						}
+						if (bytes_read >= sizeof(buffer)) {
+							lime::bug("path::canonicalize failed, bytes_read>=sizeof(buffer)");
+							lime::exit_program(1);
+						}
+
+						buffer[bytes_read] = '\0';
+						result = path(buffer);
+					}
+				}
+				return result;
+			}
+
 			path get_parent_folder() const noexcept {
 				if (heirarchy.size() <= 1) {
 					lime::bug("path::get_parent_folder() failed, heirarchy.size() <= 1");
@@ -167,14 +202,13 @@ namespace lime {
 				return result;
 			}
 
-			// TODO: Make this work with paths that aren't on the filesystem.
-			// You gotta make canonicalized_absolute canonicalize as far as possible and then return what it could do.
 			path get_relative_path(const path &base_path_original) const noexcept {
 				check_path_validity(base_path_original, "base_path_original", "path::get_relative_path");
 				check_this_validity("path::get_relative_path");
 
 				const path base_path = base_path_original.to_canonicalized_absolute();
 				const path this_path = this->to_canonicalized_absolute();
+				if (base_path.is_empty() || this_path.is_empty()) { return path(); }
 
 				const_iterator base_path_ptr = base_path.begin();
 				const_iterator this_path_ptr = this_path.begin();
@@ -205,12 +239,6 @@ namespace lime {
 				}
 
 				return result;
-			}
-
-			path to_canonicalized_absolute() const noexcept {
-				check_this_validity("path::canonicalized_absolute");
-
-				return lime::string(this->to_std_string()).to_canonicalized_absolute();
 			}
 
 			path strip_trailing_slash() const noexcept {
@@ -488,17 +516,12 @@ namespace lime {
 		}
 
 		lime::string to_canonicalized_absolute() const noexcept {
-			if (this->length() == 0) {
-				lime::error("lime::string::to_canonicalized_absolute() failed, string empty");
+			path result = path(*this).to_canonicalized_absolute();
+			if (result.is_empty()) {
+				lime::error("lime::string::to_canonicalized_absolute failed, general failure");
 				lime::exit_program(1);
+				// TODO: Can get more specific with errno.
 			}
-
-			lime::string previous_dir = lime::pwd();
-			lime::cd(*this);
-			lime::string result = lime::pwd();
-			lime::cd(previous_dir);
-
-			return result.strip_trailing_slash();
 		}
 
 		lime::string strip_trailing_slash() const noexcept {
@@ -662,11 +685,10 @@ namespace lime {
 	}
 
 	inline void create_path(const lime::string& path) noexcept {
-		// TODO: create this.
-		//lime::string canonicalized_path = path.canonicalize();
+		lime::string real_path = path.to_canonicalized_absolute();
 		lime::string current_path;
-		for (size_t i = 0; i < path.num_path_parts(); i++) {
-			current_path /= path.path_part(i);
+		for (size_t i = 0; i < real_path.num_path_parts(); i++) {
+			current_path /= real_path.path_part(i);
 			if (!current_path.is_existing_directory()) {
 				// TODO: Just inherit from parent folder, I think that's the best option, right?
 				if (open(current_path.c_str(), O_CREAT, S_IRWXU | S_IRGRP | S_IROTH) < 0) {
@@ -690,27 +712,38 @@ namespace lime {
 		fflush(stdout);
 		lime::string final_message = "[ERROR]: " + message + '\n';
 		write(STDERR_FILENO, final_message.c_str(), final_message.length() * sizeof(char));
+		// no point in detecting error
 	}
 
 	inline void warn(const lime::string& message) noexcept {
 		lime::string final_message = "[WARNING]: " + message + '\n';
-		fwrite(final_message.c_str(), sizeof(char), final_message.length(), stdout);
+		if (fwrite(final_message.c_str(), sizeof(char), final_message.length(), stdout) < final_message.length()) {
+			lime::error("lime::warn failed, fwrite failed");
+			lime::exit_program(1);
+		}
 	}
 
 	inline void info(const lime::string& message) noexcept {
 		lime::string final_message = "[INFO]: " + message + '\n';
-		fwrite(final_message.c_str(), sizeof(char), final_message.length(), stdout);
+		if (fwrite(final_message.c_str(), sizeof(char), final_message.length(), stdout) < final_message.length()) {
+			lime::error("lime::info failed, fwrite failed");
+			lime::exit_program(1);
+		}
 	}
 
 	inline void cmd_label(const lime::string& message) noexcept {
 		lime::string final_message = "[CMD]: " + message + '\n';
-		fwrite(final_message.c_str(), sizeof(char), final_message.length(), stdout);
+		if (fwrite(final_message.c_str(), sizeof(char), final_message.length(), stdout) < final_message.length()) {
+			lime::error("lime::cmd_label failed, fwrite failed");
+			lime::exit_program(1);
+		}
 	}
 
 	inline void bug(const lime::string &message) noexcept {
 		fflush(stdout);
 		lime::string final_message = "[BUG DETECTED]: " + message + '\n';
 		write(STDERR_FILENO, final_message.c_str(), final_message.length() * sizeof(char));
+		// no point in detecting error
 	}
 
 }
@@ -718,6 +751,4 @@ namespace lime {
 inline lime::string operator+(const char *raw_str, const lime::string &lime_string) noexcept { return lime_string.insert(0, raw_str); }
 inline lime::string operator+(char character, const lime::string& lime_string)      noexcept { return lime_string.insert(0, character); }
 
-inline lime::string operator/(const char *raw_str, const lime::string& lime_string) noexcept {
-	return lime::string(raw_str) / lime_string;
-}
+inline lime::string operator/(const char *raw_str, const lime::string& lime_string) noexcept { return lime::string(raw_str) / lime_string; }
