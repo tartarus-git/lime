@@ -29,6 +29,12 @@ lime::string operator/(const char *raw_str, const lime::string& lime_string) noe
 
 namespace lime {
 
+	enum class error_t : short {
+		SUCCESS,
+		ERRNO,
+		PATH_ABSOLUTE
+	}
+
 	[[noreturn]] inline void exit_program(int exit_code) noexcept {
 		std::exit(exit_code);
 	}
@@ -89,10 +95,12 @@ namespace lime {
 				return result;
 			}
 
-			path concatinate(const path &right) const noexcept {
+			path concatinate(const path &right, error_t &error) const noexcept {
+				error = error_t::SUCCESS;
+
 				if (right.is_absolute()) {
-					lime::bug("path::concatinate failed, right is absolute, not allowed");
-					lime::exit_program(1);
+					error = error_t::PATH_ABSOLUTE;
+					return path();
 				}
 
 				if (heirarchy.size() == 0) { return right; }
@@ -100,76 +108,57 @@ namespace lime {
 				path result = *this;
 
 				// NOTE: If there is a trailing slash in our path, account for it.
-				if (*(result.end() - 1) == "") { result.heirarchy.pop_back(); }
+				//if (*(result.end() - 1) == "") { result.heirarchy.pop_back(); }
+				// TODO: Make heirarchy strip this on creation.
 
-				for (const std::string &element : right) { result.heirarchy.push_back(element); }
+				for (const std::string &element : right) { result.push_back(element); }
 
 				return result;
 			}
 
-		public:
-			std::vector<std::string> heirarchy;
+			path inner_to_absolute(error_t &error) const noexcept {
+				error = error_t::SUCCESS;
 
-			path() noexcept { }
-
-			path(const path &other) noexcept { heirarchy = other.heirarchy; }
-
-			path(const lime::string &input) noexcept { heirarchy = parse(input); }
-			path(const char *input) noexcept { heirarchy = parse(input); }
-
-			size_t size() const noexcept { return heirarchy.size(); }
-
-			bool is_empty() const noexcept { return size() == 0; }	// TODO: check if vector has an is_empty()-like function
-
-			path operator/(const path &right) const noexcept {
-				if (right.is_absolute()) {
-					lime::bug("path::operator/(right) failed, right is absolute, not allowed");
-					lime::exit_program(1);		// TODO: replace with EXIT_FAILURE
-				}
-				return concatinate(right);
-			}
-
-			bool is_absolute() const noexcept {
-				if (heirarchy.size() == 0) { return false; }
-				return (*this)[0] == "";
-			}
-
-			path to_absolute() const noexcept {
 				if (is_absolute()) { return *this; }
 
 				char cwd[PATH_MAX + 1];	// NOTE: +1 because of trailing NUL, necessary says stackoverflow comment
 				if (getcwd(cwd, sizeof(cwd)) == nullptr) {
-					lime::bug("path::to_absolute() failed, getcwd failed, general failure");
-					lime::exit_program(1);
+					error = error_t::ERRNO;
+					return path();
 				}
 
 				return path(cwd) / *this;
 			}
 
-			path to_canonicalized_absolute() const noexcept {
+			path inner_to_canonicalized_absolute(error_t &error) const noexcept {
+				error = error_t::SUCCESS;
+
 				path result;
 				for (const std::string &element : *this) {
 					result.push_back(element);
 
 					while (true) {
 						char buffer[PATH_MAX + 1];
-						ssize_t bytes_read = readlink(path.to_std_string().c_str(), buffer, sizeof(buffer))
+						ssize_t bytes_read = readlink(result.to_std_string().c_str(), buffer, sizeof(buffer));
 
 						if (bytes_read < 0) {
 							switch (errno) {
-							default: return path();
 							case EACCES: break;
 							case EINVAL: break;
+
+							default:
+								error = error_t::ERRNO;
+								return path();
 							}
 							break;
 						}
 						if (bytes_read == 0) {
-							lime::bug("path::canonicalize failed, bytes_read=0");
-							lime::exit_program(1);
+							error = error_t::INVALID_SYMLINK;
+							return path();
 						}
-						if (bytes_read >= sizeof(buffer)) {
-							lime::bug("path::canonicalize failed, bytes_read>=sizeof(buffer)");
-							lime::exit_program(1);
+						if (bytes_read > sizeof(buffer) - 1) {
+							lime::bug("path::inner_to_canonicalized_absolute() failed, bytes_read too large, buffer overflow?");
+							lime::exit_program(EXIT_FAILURE);
 						}
 
 						buffer[bytes_read] = '\0';
@@ -179,18 +168,22 @@ namespace lime {
 				return result;
 			}
 
-			path get_parent_folder() const noexcept {
-				if (heirarchy.size() <= 1) {
-					lime::bug("path::get_parent_folder() failed, heirarchy.size() <= 1");
-					lime::exit_program(1);
+			path inner_get_parent_folder(error_t &error) const noexcept {
+				error = error_t::SUCCESS;
+
+				if (size() <= 1) {
+					error = error_t::PATH_INVALID;
+					return path();
 				}
 
 				path result = *this;
 
 				if (*(heirarchy.end() - 1) == "") {
 					if (heirarchy.size() <= 2) {
-						lime::bug("path::get_parent_folder() failed, last=\"\" and size() <= 2");
-						lime::exit_program(1);
+						// TODO: Make other bug error codes not return error code but just terminate and show bug.
+						// NOTE: Already did this TODO, I don't know if I got all the spots. I probably did. Check again.
+						lime::bug("path::inner_get_parent_folder() failed, last=\"\" and size() <= 2");
+						lime::exit_program(EXIT_FAILURE);
 					}
 
 					result.heirarchy.erase(heirarchy.end() - 2);
@@ -202,13 +195,15 @@ namespace lime {
 				return result;
 			}
 
-			path get_relative_path(const path &base_path_original) const noexcept {
-				check_path_validity(base_path_original, "base_path_original", "path::get_relative_path");
-				check_this_validity("path::get_relative_path");
+			path inner_get_relative_path(const path &base_path_original) const noexcept {
+				//check_path_validity(base_path_original, "base_path_original", "path::get_relative_path");
+				//check_this_validity("path::get_relative_path");
 
 				const path base_path = base_path_original.to_canonicalized_absolute();
 				const path this_path = this->to_canonicalized_absolute();
-				if (base_path.is_empty() || this_path.is_empty()) { return path(); }
+				// TODO: Line shouldn't be necessary, instead make sure that to_canonicalized_absolute checks for this and
+				// validates it's output.
+				//if (base_path.is_empty() || this_path.is_empty()) { return path(); }
 
 				const_iterator base_path_ptr = base_path.begin();
 				const_iterator this_path_ptr = this_path.begin();
@@ -241,6 +236,106 @@ namespace lime {
 				return result;
 			}
 
+		public:
+			std::vector<std::string> heirarchy;
+
+			path() noexcept { }
+
+			path(const path &other) noexcept { heirarchy = other.heirarchy; }
+
+			path(const lime::string &input) noexcept { heirarchy = parse(input); }
+			path(const char *input) noexcept { heirarchy = parse(input); }
+
+			size_t size() const noexcept { return heirarchy.size(); }
+			bool is_empty() const noexcept { return heirarchy.empty(); }
+			void push_back(const std::string &input) noexcept { heirarchy.push_back(input); }
+
+			path operator/(const path &right) const noexcept {
+				error_t error;
+				const path result = concatinate(right, error);
+
+				switch (error) {
+				case error_t::SUCCESS: break;
+
+				case error_t::PATH_ABSOLUTE:
+					lime::error("path::operator/(right) failed, right is absolute, not allowed");
+					lime::exit_program(EXIT_FAILURE);
+				default:
+					lime::bug("path::operator/(right) failed, unknown error");
+					lime::exit_program(EXIT_FAILURE);
+				}
+
+				return result;
+			}
+
+			// TODO: Every function and every way you can use to modify the heirarchy vector needs to check it's validity and throw
+			// error if it's invalid.
+
+			bool is_absolute() const noexcept {
+				if (is_empty()) { return false; }
+				return (*this)[0] == "";
+			}
+
+			path to_absolute() const noexcept {
+				error_t error;
+				const path result = inner_to_absolute(error);
+
+				switch (error) {
+				case error_t::SUCCESS: break;
+
+				case error_t::ERRNO:
+					lime::bug("path::to_absolute() failed, general failure");
+					lime::exit_program(EXIT_FAILURE);
+				default:
+					lime::bug("path::to_absolute() failed, unknown failure");
+					lime::exit_program(EXIT_FAILURE);
+				}
+
+				return result;
+			}
+
+			path to_canonicalized_absolute() const noexcept {
+				error_t error;
+				const path result = inner_to_canonicalized_absolute(error);
+
+				switch (error) {
+				case error_t::SUCCESS: break;
+
+				case error_t::INVALID_SYMLINK:
+					lime::error("path::to_canonicalized_absolute() failed, invalid symlink");
+					lime::exit_program(EXIT_FAILURE);
+
+				default:
+					lime::bug("path::to_canonicalized_absolute() failed, unknown error");
+					lime::exit_program(EXIT_FAILURE);
+				}
+
+				return result;
+			}
+
+			path get_parent_folder() const noexcept {
+				error_t error;
+				const path result = inner_get_parent_folder(&error);
+
+				switch (error) {
+				case error_t::SUCCESS: break;
+
+				case error_t::PATH_INVALID:
+					lime::error("path::get_parent_folder() failed, path doesn't have parent");
+					lime::exit_program(EXIT_FAILURE);
+
+				default:
+					lime::bug("path::get_parent_folder() failed, unknown error");
+					lime::exit_program(EXIT_FAILURE);
+				}
+
+				return result;
+			}
+
+			path get_relative_path(const path &base_path_original) const noexcept {
+				// TODO: Finish implementing inner_get_relative_path and then implement this function.
+			}
+
 			path strip_trailing_slash() const noexcept {
 				check_this_validity("path::strip_trailing_slash");
 
@@ -259,6 +354,9 @@ namespace lime {
 				return *(normalized.end() - 1);
 			}
 
+			// TODO: This function is useless. Remove it and it's fellow.
+			// You gotta check the validity in the functions where you change the heirarchy, not in the functions where you read
+			// the heirarchy. Makes more sense that way.
 			void check_path_validity(const path &p, const lime::string &p_name, const lime::string &function_name) const noexcept {
 				if (p.size() == 0) {
 					lime::bug(function_name + " failed, " + p_name + " empty");
