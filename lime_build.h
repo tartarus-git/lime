@@ -242,13 +242,10 @@ namespace lime {
 				return result;
 			}
 
-			// TODO: FROM HERE, fix those TODO's down in this function and make this function robust.
 			path to_canonicalized_absolute(error_t &error) const noexcept {
 				error = error_t::SUCCESS;
 
 				path result;
-
-				if (this->is_empty()) { error = error_t::PATH_EMPTY; return path(); }
 
 				for (const std::string &element : *this) {
 					result.push_back(element);
@@ -256,12 +253,14 @@ namespace lime {
 					while (true) {
 						char buffer[PATH_MAX + 1];
 						ssize_t bytes_read = readlink(result.to_std_string().c_str(), buffer, sizeof(buffer));
-						// TODO: Research and then put this in a loop in case EINTR happens and such stuff.
-
+						// TODO: Put in loop because of pipes and buffering and system stuff. Just to be sure.
+						// The docs are confusing.
 						if (bytes_read < 0) {
 							switch (errno) {
 							case EACCES: break;
 							case EINVAL: break;
+							case ENOENT:
+								// TODO: break from function here.
 
 							default:
 								error = error_t::ERRNO;
