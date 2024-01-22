@@ -167,14 +167,14 @@ namespace lime {
 			const std::string& operator[](size_t index) const noexcept {
 				if (index >= this->size()) {
 					lime::bug("path::operator[] const failed, index out-of-bounds");
-					lime::exit_program(1);
+					lime::exit_program(EXIT_FAILURE);
 				}
 				return heirarchy[index];
 			}
 			std::string& operator[](size_t index) noexcept {
 				if (index >= this->size()) {
 					lime::bug("path::operator[] failed, index out-of-bounds");
-					lime::exit_program(1);
+					lime::exit_program(EXIT_FAILURE);
 				}
 				return heirarchy[index];
 			}
@@ -245,41 +245,75 @@ namespace lime {
 			path to_canonicalized_absolute(error_t &error) const noexcept {
 				error = error_t::SUCCESS;
 
+				if (this.empty()) {
+					lime::bug("path::to_canonicalized_absolute failed, result has empty elements");
+					lime::exit_program(EXIT_FAILURE);
+				}
+
 				path result;
 
-				for (const std::string &element : *this) {
+				for (const_iterator it = this->begin(); it < this->end(); it++) {
 					result.push_back(element);
 
 					while (true) {
+						const std::string result_string = result.to_std_string();
+
 						char buffer[PATH_MAX + 1];
-						ssize_t bytes_read = readlink(result.to_std_string().c_str(), buffer, sizeof(buffer));
-						// TODO: Put in loop because of pipes and buffering and system stuff. Just to be sure.
-						// The docs are confusing.
-						if (bytes_read < 0) {
-							switch (errno) {
-							case EACCES: break;
-							case EINVAL: break;
-							case ENOENT:
-								// TODO: break from function here.
+						char *buffer_head = buffer;
+						char *buffer_end = buffer + sizeof(buffer);
 
-							default:
-								error = error_t::ERRNO;
-								return path();
+						while (true) {
+							ssize_t bytes_read = readlink(result_string.c_str(), buffer_head, buffer_end - buffer_head);
+
+							if (bytes_read == 0) { break; }
+
+							if (bytes_read < 0) {
+								switch (errno) {
+								case EACCES:
+								case EINVAL:
+									goto continue_for_loop;
+
+								case ENOENT:
+									for (it++; it < this->end(); it++) {
+										result.push_back(element);
+									}
+
+									for (size_t i = 1; i < result.size(); i++) {
+										if (result[i] == "") {
+											lime::bug("path::to_canonicalized_absolute failed, result has empty elements");
+											lime::exit_program(EXIT_FAILURE);
+										}
+									}
+
+									return result;
+
+								default:
+									lime::bug("path::to_canonicalized_absolute failed, readlink failed, unknown error");
+									lime::exit_program(EXIT_FAILURE);
+								}
 							}
-							break;
-						}
-						// TODO: Research this case.
-						if (bytes_read == 0) {
-							error = error_t::INVALID_SYMLINK;
-							return path();
-						}
-						if (bytes_read > sizeof(buffer) - 1) {
-							lime::bug("path::inner_to_canonicalized_absolute() failed, bytes_read too large, buffer overflow?");
-							lime::exit_program(EXIT_FAILURE);
+
+							// NOTE: Can't allow pointer to escape the object because UB. That's why we're doing it this way.
+							// NOTE: The -1 is for the NUL termination character that still needs to be added to the buffer.
+							if (buffer_end - buffer_head - 1 < bytes_read) {
+								lime::bug("path::to_canonicalized_absolute failed, readlink buffer overflowed");
+								lime::exit_program(EXIT_FAILURE);
+							}
+
+							buffer_head += bytes_read;
 						}
 
-						buffer[bytes_read] = '\0';
+						*buffer_head = '\0';
 						result = path(buffer);
+					}
+
+			continue_for_loop:
+				}
+
+				for (size_t i = 1; i < result.size(); i++) {
+					if (result[i] == "") {
+						lime::bug("path::to_canonicalized_absolute failed, result has empty elements");
+						lime::exit_program(EXIT_FAILURE);
 					}
 				}
 
@@ -365,7 +399,7 @@ namespace lime {
 			}
 
 			std::string to_std_string() const noexcept { 
-				if (this->size() == 1 && *(this->begin()) == "") { return "/"; }
+				if (this->size() == 1 && this->begin()->empty()) { return "/"; }
 
 				std::string result;
 
