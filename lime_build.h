@@ -81,35 +81,103 @@ namespace lime {
 				}
 			}
 
-			std::vector<std::string> parse(const lime::string &input) const noexcept {
+			std::vector<std::string> parse(const lime::string &input, error_t &error) const noexcept {
+				error = error_t::SUCCESS;
+
 				std::vector<std::string> result;
+
 				result.push_back(std::string());
 				for (const char &character : input) { parse_inner(result, character); }
-				if ((result.end() - 1)->size() == 0) { result.pop_back(); }
+				if (result.last()->size() == 0) { result.pop_back(); }
+
+				for (size_t i = 1; i < result.size(); i++) {
+					if (element.empty()) {
+						error = error_t::PATH_INVALID;
+						return std::vector<std::string>();
+					}
+				}
+
 				return result;
 			}
 
-			std::vector<std::string> parse(const char *input) const noexcept {
+			std::vector<std::string> parse(const char *input, error_t &error) const noexcept {
+				error = error_t::SUCCESS;
+
 				std::vector<std::string> result;
+
 				result.push_back(std::string());
 				for (; *input != '\0'; input++) { parse_inner(result, *input); }
-				if ((result.end() - 1)->size() == 0) { result.pop_back(); }
+				if (result.last()->size() == 0) { result.pop_back(); }
+
+				for (size_t i = 1; i < result.size(); i++) {
+					if (element.empty()) {
+						error = error_t::PATH_INVALID;
+						return std::vector<std::string>();
+					}
+				}
+
 				return result;
 			}
 
-		public:
 			std::vector<std::string> heirarchy;
 
-			path() noexcept { }
+		public:
+			path() noexcept = default;
 
-			path(const path &other) noexcept { heirarchy = other.heirarchy; }
+			path(const path &other) noexcept : heirarchy(other.heirarchy) { }
+			path(path&& other) noexcept : heirarchy(std::move(other.heirarchy)) { }
 
-			path(const lime::string &input) noexcept { heirarchy = parse(input); }
-			path(const char *input) noexcept { heirarchy = parse(input); }
+			path& operator=(const path &right) noexcept {
+				heirarchy = right.heirarchy;
+				return *this;
+			}
+			path& operator=(path &&right) noexcept {
+				heirarchy = std::move(right.heirarchy);
+				return *this;
+			}
+
+			path(const lime::string &input) noexcept : heirarchy(parse(input)) { }
+			path(const char *input)		noexcept : heirarchy(parse(input)) { }
 
 			size_t size() const noexcept { return heirarchy.size(); }
-			bool is_empty() const noexcept { return heirarchy.empty(); }
+			bool empty() const noexcept { return heirarchy.empty(); }
+
 			void push_back(const std::string &input) noexcept { heirarchy.push_back(input); }
+			std::string pop_back() 			 noexcept { heirarchy.pop_back(); }
+
+			// NOTE: For some reason, the vector iterators don't play nice with pointers,
+			// so have to use the vector iterators as our iterators, which makes more sense anyway.
+			// It's what we should be doing anyway. I just assumed std::vector used pointers as iterators,
+			// but I guess that's totally implementation defined. For strange architectures with strange memory
+			// geometries, it makes sense that they wouldn't be pointers.
+			// Still, they should be representable by pointers on my system, so it surprises me that they're not.
+			// I guess it's a safety feature to stop you from assuming that they're pointers, because they're not,
+			// even when they could be.
+			using const_iterator = decltype(heirarchy)::const_iterator;
+			using iterator = decltype(heirarchy)::iterator;
+
+			const_iterator begin() const noexcept { return heirarchy.begin(); }
+			iterator begin() 	     noexcept { return heirarchy.begin(); }
+			const_iterator end()   const noexcept { return heirarchy.end(); }
+			iterator end() 		     noexcept { return heirarchy.end(); }
+
+			const_iterator last() const noexcept { return heirarchy.end()--; }
+			iterator last() 	    noexcept { return heirarchy.end()--; }
+
+			const std::string& operator[](size_t index) const noexcept {
+				if (index >= this->size()) {
+					lime::bug("path::operator[] const failed, index out-of-bounds");
+					lime::exit_program(1);
+				}
+				return heirarchy[index];
+			}
+			std::string& operator[](size_t index) noexcept {
+				if (index >= this->size()) {
+					lime::bug("path::operator[] failed, index out-of-bounds");
+					lime::exit_program(1);
+				}
+				return heirarchy[index];
+			}
 
 			path concatinate(const path &right, error_t &error) const noexcept {
 				error = error_t::SUCCESS;
@@ -123,9 +191,7 @@ namespace lime {
 
 				path result = *this;
 
-				// TODO: Put this bug check in a few other useful places, just to make sure that no situations sneak in
-				// where a trailing emptyness is there.
-				if ((result.end - 1)->size() == 0) {
+				if (result.last()->size() == 0) {
 					lime::bug("path::concatinate failed, this path had empty last element");
 					lime::exit_program(EXIT_FAILURE);
 				}
@@ -176,6 +242,7 @@ namespace lime {
 				return result;
 			}
 
+			// TODO: FROM HERE, fix those TODO's down in this function and make this function robust.
 			path to_canonicalized_absolute(error_t &error) const noexcept {
 				error = error_t::SUCCESS;
 
@@ -277,105 +344,38 @@ namespace lime {
 				return result;
 			}
 
-			// TODO: FROM HERE
-
-			path strip_trailing_slash() const noexcept {
-				check_this_validity("path::strip_trailing_slash");
-
-				path result = *this;
-				// TODO: Think about the functions that path should have. Should it have it's own pop_back().
-				// Should we just inherit from std::vector<std::string>?
-				// Probably not, but think about it.
-				if (*(result.end() - 1) == "") { result.heirarchy.pop_back(); }
+			std::string get_filename() const noexcept {
+				std::string result = *(this->last());
+				if (result.empty()) {
+					lime::bug("path::get_filename() failed, last heirarchy element is empty, it shouldn't be!");
+					lime::exit_program(1);
+				}
 				return result;
 			}
 
-			std::string get_filename() const noexcept {
-				check_this_validity("path::get_filename");
-
-				path normalized = this->strip_trailing_slash();
-				return *(normalized.end() - 1);
-			}
-
-			// TODO: Remove for obvious reasons.
-			void check_path_validity(const path &p, const lime::string &p_name, const lime::string &function_name) const noexcept {
-				if (p.size() == 0) {
-					lime::bug(function_name + " failed, " + p_name + " empty");
-					lime::exit_program(1);
-				}
-				if (p.size() == 1) {
-					if (p[0] == "") {
-						lime::bug(function_name + " failed, single empty element invalid in " + p_name);
-						lime::exit_program(1);
-					}
-				}
-			}
-
-			void check_this_validity(const lime::string &function_name) const noexcept {
-				return check_path_validity(*this, "this", function_name);
-			}
-
 			std::chrono::system_clock::time_point get_last_modification_time() const noexcept {
-				check_this_validity("path::get_last_modification_time");
-
 				struct stat stat_buf;
-
 				if (stat(this->to_std_string().c_str(), &stat_buf) < 0) {
-					lime::bug("path::get_last_modification_time for " + this->to_std_string() + "failed, general failure");
+					// TODO: You should probably not use this + override in your library, in case the user wants it
+					// disabled for whatever valid reason he might have. Probably add a define at the top or something
+					// where the user can disable those global const char * operator + overrides.
+					lime::bug("path::get_last_modification_time failed, stat for " + this->to_std_string() + "failed, general failure");
 					lime::exit_program(1);
 				}
-
 				return std::chrono::system_clock::from_time_t(stat_buf.st_mtime);
 			}
 
-			// NOTE: For some reason, the vector iterators don't play nice with pointers,
-			// so have to use the vector iterators as our iterators, which makes more sense anyway.
-			// It's what we should be doing anyway. I just assumed std::vector used pointers as iterators,
-			// but I guess that's totally implementation defined. For strange architectures with strange memory
-			// geometries, it makes sense that they wouldn't be pointers.
-			// Still, they should be representable by pointers on my system, so it surprises me that they're not.
-			// I guess it's a safety feature to stop you from assuming that they're pointers, because they're not,
-			// even when they could be.
-			using const_iterator = decltype(heirarchy)::const_iterator;
-			using iterator = decltype(heirarchy)::iterator;
-
-			const_iterator begin() const noexcept { return heirarchy.begin(); }
-			iterator begin() noexcept { return heirarchy.begin(); }
-			const_iterator end() const noexcept { return heirarchy.end(); }
-			iterator end() noexcept { return heirarchy.end(); }
-
-			const std::string& operator[](size_t index) const noexcept {
-				if (index >= heirarchy.size()) {
-					lime::bug("path::operator[] const failed, index out-of-bounds");
-					lime::exit_program(1);
-				}
-				return heirarchy[index];
-			}
-			std::string& operator[](size_t index) noexcept {
-				if (index >= heirarchy.size()) {
-					lime::bug("path::operator[] failed, index out-of-bounds");
-					lime::exit_program(1);
-				}
-				return heirarchy[index];
-			}
-
-			path& operator=(const path &right) noexcept {
-				heirarchy = right.heirarchy;
-				return *this;
-			}
-
-			path& operator=(path &&right) noexcept {
-				heirarchy = std::move(right.heirarchy);
-				return *this;
-			}
-
 			std::string to_std_string() const noexcept { 
+				if (this->size() == 1 && *(this->begin()) == "") { return "/"; }
+
 				std::string result;
-				for (size_t i = 0; i < heirarchy.size() - 1; i++) {
-					const std::string &element = (*this)[i];
-					result += element + '/';
+
+				for (const_iterator it = this->begin(); it < heirarchy.last(); it++) {
+					result += *it += '/';
 				}
-				result += *(heirarchy.end() - 1);
+
+				result += *(heirarchy.last());
+
 				return result;
 			}
 		};
