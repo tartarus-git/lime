@@ -386,15 +386,19 @@ namespace lime {
 				return result;
 			}
 
-			std::chrono::system_clock::time_point get_last_modification_time() const noexcept {
+			std::chrono::system_clock::time_point get_last_modification_time(error_t &error) const noexcept {
+				error = error_t::SUCCESS;
+
 				struct stat stat_buf;
+
 				if (stat(this->to_std_string().c_str(), &stat_buf) < 0) {
 					// TODO: You should probably not use this + override in your library, in case the user wants it
 					// disabled for whatever valid reason he might have. Probably add a define at the top or something
 					// where the user can disable those global const char * operator + overrides.
 					lime::bug("path::get_last_modification_time failed, stat for " + this->to_std_string() + "failed, general failure");
-					lime::exit_program(1);
+					lime::exit_program(EXIT_FAILURE);
 				}
+
 				return std::chrono::system_clock::from_time_t(stat_buf.st_mtime);
 			}
 
@@ -708,60 +712,79 @@ namespace lime {
 		}
 	};
 
+	// TODO: Check through the string class, make the wrappers in there that wrap around the path class actually make sense.
+
 	lime::string pwd() noexcept {
 		char buffer[PATH_MAX + 1];	// NOTE: +1 because NUL character
 		if (getcwd(buffer, sizeof(buffer)) == nullptr) {
-			lime::error("getcwd failed in lime::pwd(), couldn't get cwd");
-			lime::exit_program(1);
+			lime::bug("pwd failed, getcwd failed, unknown error");
+			lime::exit_program(EXIT_FAILURE);
 		}
-		return lime::string(buffer);
+		return buffer;
 	}
 
-	void cd(lime::string new_directory) noexcept {
+	void cd(lime::string new_directory, error_t &error) noexcept {
+		error = error_t::SUCCESS;
+
 		if (chdir(new_directory.c_str()) < 0) {
 			switch (errno) {
 			case ENOTDIR:
-				lime::error("lime::cd failed, at least one component of new_directory is a file");
-				lime::exit_program(1);
+				error = error_t::PATH_INVALID;
+				return;
+
 			default:
-				lime::error("lime:cd failed, general failure, platform explanation: " + lime::string(strerror(errno)));
-				lime::exit_program(1);
+				lime::bug("cd failed, chdir failed, unknown error");
+				lime::exit_program(EXIT_FAILURE);
 			}
 		}
 	}
 
 	template <typename functor_t>
-	bool call_if_self_rebuild_necessary(const lime::string& src_file_path, functor_t functor) noexcept {
-		lime::string self_exe_path("/proc/self/exe");
-		if (self_exe_path.get_last_modification_time() < src_file_path.get_last_modification_time()) {
+	bool call_if_self_rebuild_necessary(const lime::string &src_file_path, functor_t functor, error_t &error) noexcept {
+		error = error_t::SUCCESS;
+
+		auto binary_time = lime::string("/proc/self/exe").get_last_modification_time(error);
+		if (error != error_t::SUCCESS) { return false; }
+
+		auto src_time = src_file_path.get_last_modification_time(error);
+		if (error != error_t::SUCCESS) { return false; }
+
+		if (binary_time < src_time) {
 			lime::info("self rebuild necessary, calling self rebuild function...");
 			functor();
 			lime::info("self rebuild finished");
 			return true;
 		}
+
 		return false;
 	}
 
 	template <typename functor_t>
-	bool call_if_out_of_date(const lime::string& path, std::vector<lime::string> deps, functor_t functor) noexcept {
-		for (const lime::string& dep : deps) {
-			if (path.get_last_modification_time() < dep.get_last_modification_time()) {
+	bool call_if_out_of_date(const lime::string& path, std::vector<lime::string> deps, functor_t functor, error_t &error) noexcept {
+		error = error_t::SUCCESS;
+
+		auto path_time = path.get_last_modification_time(error);
+		if (error != error_t::SUCCESS) { return false; }
+
+		for (const lime::string &dep : deps) {
+			auto dep_time = dep.get_last_modification_time(error);
+			if (error != error_t::SUCCESS) { return false; }
+
+			if (path_time < dep_time) {
 				lime::info('\"' + path + '\"' + " is out-of-date, calling remedial function...");
 				functor();
 				lime::info('\"' + path + '\"' + " remedied");
 				return true;
 			}
 		}
+
 		return false;
 	}
 
-	enum class inner_execute_command_return_t : uint8_t {
-		SUCCESS,
-		COMMAND_FAILED,
-		INVOKE_FAILED
-	};
+	// TODO: FROM HERE
+	inline void inner_execute_command(const lime::string &cmdline, error_t &error) noexcept {
+		error = error_t::SUCCESS;
 
-	inline inner_execute_command_return_t inner_execute_command(const lime::string& cmdline) noexcept {
 		std::vector<lime::string> quote_separated = cmdline.split('\"');
 
 		std::vector<lime::string> final_args;
@@ -773,32 +796,41 @@ namespace lime {
 
 		const char * const target_file = final_args[0].c_str();
 
-		// TODO: Figure out why the consts are the way they are for this.
-		char ** const converted_final_args = new (std::nothrow) char *[final_args.size() + 1];
+		// TODO: Why does execvp reserve the right to change this? Can it actually or is it's
+		// function signature just badly made.
+		char * * const converted_final_args = new (std::nothrow) char*[final_args.size() + 1];
 		for (size_t i = 0; i < final_args.size(); i++) {
 			converted_final_args[i] = final_args[i].data();
 		}
-		converted_final_args[final_args.size()] = nullptr;
+		*(converted_final_args.end() - 1) = nullptr;
 
 		pid_t vfork_result = vfork();
 
 		// CHILD
 		if (vfork_result == 0) {
-			if (execvp(target_file, converted_final_args) == -1) { return inner_execute_command_return_t::INVOKE_FAILED; }
+			if (execvp(target_file, converted_final_args) < 0) {
+				// TODO: How the hell am I going to get the errno from here back to
+				// the main program? I need it there to process it and potentially
+				// throw something on the command line or do something else.
+				// NOTE: I have to use _exit here because of the requirements for vfork().
+				std::_exit(EXIT_FAILURE);
+			}
 		}
 		
 		// PARENT
 		delete[] converted_final_args;
 
-		if (vfork_result == -1) { return inner_execute_command_return_t::INVOKE_FAILED; }
+		if (vfork_result == -1) { error = error_t::CMD_INVOKE_FAILED; return; }
 
 		int wstatus;
-		if (wait(&wstatus) == -1) { return inner_execute_command_return_t::INVOKE_FAILED; }
+		if (wait(&wstatus) == -1) { error = error_t::CMD_INVOKE_FAILED; return; }
 		if (WIFEXITED(wstatus)) {
-			if (WEXITSTATUS(wstatus) != EXIT_SUCCESS) { return inner_execute_command_return_t::COMMAND_FAILED; }
+			// TODO: You definitely want to expose the exit code to the user,
+			// figure out an elegant way to do that.
+			if (WEXITSTATUS(wstatus) != EXIT_SUCCESS) { error = error_t::CMD_RETURNED_FAILURE; return; }
 		}
-		if (WIFSIGNALED(wstatus)) { return inner_execute_command_return_t::COMMAND_FAILED; }
-		return inner_execute_command_return_t::SUCCESS;
+		if (WIFSIGNALED(wstatus)) { error = error_t::CMD_RETURNED_FAILURE; return; }
+		return;
 	}
 
 	inline void exec(const lime::string& cmdline) noexcept {
@@ -817,6 +849,7 @@ namespace lime {
 		return true;
 	}
 
+	// TODO: Make sure this isn't brain-dead.
 	inline std::vector<lime::string> enum_files(const lime::string& target_dir, const lime::string& query) noexcept {
 		lime::string previous_working_dir = lime::pwd();
 		lime::cd(target_dir.c_str());
